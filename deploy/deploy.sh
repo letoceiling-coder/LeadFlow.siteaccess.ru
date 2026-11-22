@@ -33,12 +33,14 @@ docker tag leadflow-worker:latest leadflow-worker:prev 2>/dev/null || true
 
 # Архив только добавляет файлы. Удалённые в git страницы остались бы на сервере и сломали сборку,
 # поэтому папки с кодом очищаются целиком (копия выше). .env, данные и volume не трогаются.
-rm -rf /opt/leadflow/src /opt/leadflow/public /opt/leadflow/prisma /opt/leadflow/tests
+CODE_DIRS="/opt/leadflow/src /opt/leadflow/public /opt/leadflow/prisma /opt/leadflow/tests"
+restore() { rm -rf $CODE_DIRS; tar -xzf "/root/leadflow-releases/src-$STAMP.tgz" -C /opt; }
+rm -rf $CODE_DIRS
 
 if ! sh /opt/leadflow/deploy/remote-up.sh > /tmp/leadflow-deploy.log 2>&1; then
   tail -40 /tmp/leadflow-deploy.log
   echo "✗ Сборка упала. Работает прежняя версия (контейнеры не пересоздавались)."
-  tar -xzf "/root/leadflow-releases/src-$STAMP.tgz" -C /opt
+  restore
   exit 1
 fi
 
@@ -51,7 +53,7 @@ done
 if [ "$ok" != 1 ]; then
   echo "✗ /api/health не отвечает. Откатываю."
   docker compose -f /opt/leadflow/docker-compose.yml logs --tail=40 app worker || true
-  tar -xzf "/root/leadflow-releases/src-$STAMP.tgz" -C /opt
+  restore
   docker tag leadflow-app:prev leadflow-app:latest
   docker tag leadflow-worker:prev leadflow-worker:latest
   cd /opt/leadflow && docker compose up -d --no-build app worker
