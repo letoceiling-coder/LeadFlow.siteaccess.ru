@@ -1,7 +1,7 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
-import { ApiError, RetryableError, publicErrorMessage } from "../errors";
+import { ApiError, RetryableError, publicErrorMessage, safeLog } from "../errors";
 import { needsLargeConfirm, type searchSchema } from "../domain/schemas";
 import { mapParserOrganization } from "../domain/parser-map";
 import { ParserClient, asTask } from "../integrations/parser";
@@ -138,6 +138,7 @@ export async function syncTaskOrganizations(taskId: string) {
   let imported = 0;
   let updated = 0;
   const seen = new Set<string>();
+  const createdIds: string[] = [];
   const remote = task.externalId ? asTask(await parser.getTask(task.externalId)) : null;
   const inline = remote?.result && typeof remote.result === "object" ? (remote.result as { organizations?: unknown[] }).organizations ?? [] : [];
   for (const item of inline) {
@@ -145,8 +146,10 @@ export async function syncTaskOrganizations(taskId: string) {
     if (!mapped) continue;
     const saved = await upsertMapped(task.tenantId, mapped);
     seen.add(saved.organization.id);
-    if (saved.created) imported += 1;
-    else updated += 1;
+    if (saved.created) {
+      imported += 1;
+      createdIds.push(saved.organization.id);
+    } else updated += 1;
   }
   if (task.externalId) {
     let offset = 0;
@@ -158,8 +161,10 @@ export async function syncTaskOrganizations(taskId: string) {
         if (!mapped) continue;
         const saved = await upsertMapped(task.tenantId, mapped);
         seen.add(saved.organization.id);
-        if (saved.created) imported += 1;
-        else updated += 1;
+        if (saved.created) {
+          imported += 1;
+          createdIds.push(saved.organization.id);
+        } else updated += 1;
       }
       if (body.nextOffset == null) break;
       offset = body.nextOffset;
@@ -169,6 +174,12 @@ export async function syncTaskOrganizations(taskId: string) {
     where: { id: taskId },
       data: { organizationCount: seen.size, resultSummary: { imported, updated, unique: seen.size }, syncedAt: new Date() },
   });
+  try {
+    const { autoQualifyNew } = await import("./hunt");
+    await autoQualifyNew(task.tenantId, createdIds);
+  } catch (error) {
+    safeLog("hunt.autoQualify", error);
+  }
   return { imported, updated };
 }
 
@@ -208,6 +219,7 @@ export async function runSync(syncRunId: string) {
   let offset = 0;
   let imported = 0;
   let updated = 0;
+  const createdIds: string[] = [];
   try {
     for (let page = 0; page < 20; page += 1) {
       const query = new URLSearchParams({ limit: "500", offset: String(offset), fields: "summary" });
@@ -219,13 +231,21 @@ export async function runSync(syncRunId: string) {
         const mapped = mapParserOrganization(item);
         if (!mapped) continue;
         const saved = await upsertMapped(run.tenantId, mapped);
-        if (saved.created) imported += 1;
-        else updated += 1;
+        if (saved.created) {
+          imported += 1;
+          createdIds.push(saved.organization.id);
+        } else updated += 1;
       }
       if (body.nextOffset == null) break;
       offset = body.nextOffset;
     }
     await prisma.syncRun.update({ where: { id: run.id }, data: { status: "completed", imported, updated, finishedAt: new Date() } });
+    try {
+      const { autoQualifyNew } = await import("./hunt");
+      await autoQualifyNew(run.tenantId, createdIds);
+    } catch (error) {
+      safeLog("hunt.autoQualify", error);
+    }
   } catch (error) {
     await prisma.syncRun.update({ where: { id: run.id }, data: { status: "failed", imported, updated, error: publicErrorMessage(error), finishedAt: new Date() } });
     throw error;

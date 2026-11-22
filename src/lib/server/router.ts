@@ -54,6 +54,7 @@ import type { ProviderId } from "../integrations/catalog";
 import { requireReady } from "../integrations/config";
 import { StudioClient } from "../integrations/studio";
 import { PIPELINE } from "../domain/labels";
+import { huntRoutes } from "./hunt-routes";
 
 function allow(session: AppSession, permission: string) {
   if (!can(session.role, permission)) throw new ApiError(403, "Недостаточно прав для этого действия", "forbidden");
@@ -179,6 +180,7 @@ export async function dispatch(request: Request, path: string[]): Promise<Respon
     if (path[0] === "team") return teamRoutes(request, session, path);
     if (path[0] === "integrations") return integrationRoutes(request, session, path);
     if (path[0] === "agent") return agentRoutes(request, session, path);
+    if (path[0] === "hunt") return huntRoutes(request, session, path, url);
     if (path[0] === "jobs" && path[1] && request.method === "GET") {
       const job = await prisma.job.findFirst({ where: { id: path[1], tenantId: session.tenantId } });
       if (!job) throw new ApiError(404, "Задача не найдена", "not_found");

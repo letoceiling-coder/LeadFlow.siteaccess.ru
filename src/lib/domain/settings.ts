@@ -1,6 +1,7 @@
 import { TASK_MODEL } from "./models";
 import type { ReplyContacts } from "./offer";
 import { DEFAULT_WEIGHTS, type ScoreWeights } from "./scoring";
+import { DEFAULT_ACTIVE_SEGMENTS, isSegment, type SegmentId } from "./segments";
 
 export type TenantSettings = {
   automationMode: "manual" | "semi" | "auto";
@@ -19,6 +20,8 @@ export type TenantSettings = {
   reply: ReplyContacts;
   retentionDays: number;
   demoMode: boolean;
+  /** Охота по стратегии NEEKLO: активные сегменты, дневной лимит ручных отправок, авто-квалификация после поиска. */
+  hunt: { activeSegments: SegmentId[]; dailyLimit: number; autoQualify: boolean; autoQualifyMax: number };
 };
 
 export const DEFAULT_SETTINGS: TenantSettings = {
@@ -38,6 +41,7 @@ export const DEFAULT_SETTINGS: TenantSettings = {
   reply: { phone: "", telegram: "", max: "", email: "" },
   retentionDays: 365,
   demoMode: false,
+  hunt: { activeSegments: [...DEFAULT_ACTIVE_SEGMENTS], dailyLimit: 25, autoQualify: true, autoQualifyMax: 60 },
 };
 
 export function mergeSettings(value: unknown): TenantSettings {
@@ -51,5 +55,20 @@ export function mergeSettings(value: unknown): TenantSettings {
     ai: { ...DEFAULT_SETTINGS.ai, ...(source.ai ?? {}) },
     communication: { ...DEFAULT_SETTINGS.communication, ...(source.communication ?? {}) },
     reply: { ...DEFAULT_SETTINGS.reply, ...(source.reply ?? {}) },
+    hunt: mergeHunt(source.hunt),
+  };
+}
+
+function mergeHunt(value: unknown): TenantSettings["hunt"] {
+  const base = DEFAULT_SETTINGS.hunt;
+  const source = value && typeof value === "object" ? (value as Partial<TenantSettings["hunt"]>) : {};
+  const segments = Array.isArray(source.activeSegments) ? source.activeSegments.filter(isSegment) : base.activeSegments;
+  const limit = Number(source.dailyLimit);
+  const max = Number(source.autoQualifyMax);
+  return {
+    activeSegments: segments.length ? segments : [...base.activeSegments],
+    dailyLimit: Number.isFinite(limit) && limit >= 1 && limit <= 200 ? Math.round(limit) : base.dailyLimit,
+    autoQualify: typeof source.autoQualify === "boolean" ? source.autoQualify : base.autoQualify,
+    autoQualifyMax: Number.isFinite(max) && max >= 0 && max <= 500 ? Math.round(max) : base.autoQualifyMax,
   };
 }

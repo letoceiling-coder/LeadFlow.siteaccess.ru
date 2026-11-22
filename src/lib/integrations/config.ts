@@ -110,3 +110,9 @@ export async function requireReady(tenantId: string, provider: ProviderId, purpo
   }
   return integration;
 }
+
+/** Подключена ли интеграция и прошла ли проверку — без исключения. */
+export async function isReady(tenantId: string, provider: ProviderId) {
+  const integration = await resolveIntegration(tenantId, provider);
+  return integration.configured && integration.status === "connected";
+}

@@ -9,6 +9,8 @@ import {
   Bot,
   Building2,
   ChartColumn,
+  Crosshair,
+  Inbox,
   Globe,
   Kanban,
   LayoutDashboard,
@@ -31,7 +33,14 @@ import { NAV, ROLE_LABEL } from "@/lib/domain/labels";
 import { api } from "@/lib/client";
 import { cnJoin } from "./ui";
 
-const ICONS = { LayoutDashboard, Bot, Search, Building2, Users, Sparkles, Globe, Monitor, Kanban, MessagesSquare, Ban, Megaphone, Workflow, ChartColumn, UserRound, Plug, Settings, ScrollText };
+const ICONS = { LayoutDashboard, Crosshair, Bot, Search, Building2, Users, Sparkles, Globe, Monitor, Kanban, MessagesSquare, Ban, Megaphone, Workflow, ChartColumn, UserRound, Plug, Settings, ScrollText };
+
+const TABS = [
+  { href: "/hunt", label: "Сегодня", icon: Crosshair, exact: true },
+  { href: "/hunt/dialogs", label: "Диалоги", icon: Inbox, exact: false },
+  { href: "/hunt/search", label: "Охота", icon: Search, exact: false },
+  { href: "/hunt/stats", label: "Цифры", icon: ChartColumn, exact: false },
+] as const;
 
 export type ShellUser = { name: string; email: string; role: string; tenantId: string; tenantName: string };
 
@@ -60,6 +69,7 @@ export function Shell({ user, children }: { user: ShellUser; children: ReactNode
   const unread = notes.filter((item) => !item.readAt).length;
   const connected = integrations.filter((item) => item.status === "connected").length;
   const current = useMemo(() => NAV.find((item) => item.href === "/" ? pathname === "/" : pathname.startsWith(item.href))?.label ?? "LeadFlow", [pathname]);
+  const tabActive = (tab: (typeof TABS)[number]) => (tab.exact ? pathname === tab.href || (/^\/hunt\/[^/]+$/.test(pathname) && !TABS.some((item) => item.href === pathname)) : pathname.startsWith(tab.href));
 
   async function logout() {
     await api("/api/auth/logout", { method: "POST" });
@@ -94,10 +104,10 @@ export function Shell({ user, children }: { user: ShellUser; children: ReactNode
   const agentScreen = pathname.startsWith("/agent");
 
   return (
-    <div className="h-screen overflow-hidden lg:grid lg:grid-cols-[260px_1fr]">
+    <div className="h-[100dvh] overflow-hidden lg:grid lg:grid-cols-[260px_1fr]">
       <aside className="hidden h-screen lg:block">{nav}</aside>
       {open ? <div className="fixed inset-0 z-40 lg:hidden"><button className="absolute inset-0 bg-slate-950/50" onClick={() => setOpen(false)} aria-label="Закрыть меню" /><div className="relative h-full w-72">{nav}<button className="absolute right-3 top-4 text-white" onClick={() => setOpen(false)}><X /></button></div></div> : null}
-      <div className="flex h-screen min-w-0 flex-col">
+      <div className="flex h-[100dvh] min-w-0 flex-col">
         <header className="z-30 flex shrink-0 items-center gap-3 border-b border-line bg-white/90 px-4 py-3 backdrop-blur">
           <button className="lg:hidden" onClick={() => setOpen(true)} aria-label="Открыть меню"><Menu /></button>
           <div className="hidden min-w-0 sm:block">
@@ -112,7 +122,7 @@ export function Shell({ user, children }: { user: ShellUser; children: ReactNode
               {!hits.organizations.length && !hits.sites.length ? <div className="px-2 py-2 text-sm text-slate-500">Ничего не найдено</div> : null}
             </div> : null}
           </div>
-          <button className="rounded-lg border border-line px-2 py-1 text-xs" onClick={() => router.push("/integrations")}>{connected} подключено</button>
+          <button className="hidden rounded-lg border border-line px-2 py-1 text-xs sm:inline-block" onClick={() => router.push("/integrations")}>{connected} подключено</button>
           <button className="relative rounded-lg border border-line px-2 py-1 text-sm" onClick={() => setNoteOpen((value) => !value)} aria-label="Уведомления">
             {unread > 0 ? <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-teal-700 px-1 text-[10px] text-white">{unread}</span> : null}
             ●
@@ -127,7 +137,27 @@ export function Shell({ user, children }: { user: ShellUser; children: ReactNode
           {notes.length === 0 ? <p className="text-sm text-slate-500">Уведомлений нет</p> : notes.slice(0, 6).map((item) => <Link key={item.id} href={item.href || "/"} className="block py-1 text-sm"><b>{item.title}.</b> {item.body}</Link>)}
           <button className="mt-2 text-xs text-teal-800" onClick={() => api("/api/notifications/read", { method: "POST" }).then(() => setNotes(notes.map((item) => ({ ...item, readAt: new Date().toISOString() }))))}>Отметить прочитанными</button>
         </div> : null}
-        <main className={cnJoin("flex min-h-0 flex-1 flex-col px-4 lg:px-6", agentScreen ? "overflow-hidden py-3" : "overflow-y-auto py-6")}>{children}</main>
+        <main className={cnJoin("flex min-h-0 flex-1 flex-col px-4 lg:px-6", agentScreen ? "overflow-hidden py-3" : "overflow-y-auto py-6 pb-[calc(88px+env(safe-area-inset-bottom))] lg:pb-6")}>{children}</main>
+        {agentScreen ? null : (
+          <nav aria-label="Охота" className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
+            <div className="mx-auto grid h-16 max-w-xl grid-cols-5">
+              {TABS.map((tab) => {
+                const Icon = tab.icon;
+                const on = tabActive(tab);
+                return (
+                  <Link key={tab.href} href={tab.href} className={cnJoin("flex flex-col items-center justify-center gap-1 text-[11px] font-medium", on ? "text-teal-800" : "text-slate-500")}>
+                    <span className={cnJoin("grid h-7 w-12 place-items-center rounded-full", on ? "bg-teal-50" : "")}><Icon className="h-[22px] w-[22px]" strokeWidth={1.9} /></span>
+                    {tab.label}
+                  </Link>
+                );
+              })}
+              <button onClick={() => setOpen(true)} className="flex flex-col items-center justify-center gap-1 text-[11px] font-medium text-slate-500">
+                <span className="grid h-7 w-12 place-items-center rounded-full"><Menu className="h-[22px] w-[22px]" strokeWidth={1.9} /></span>
+                Ещё
+              </button>
+            </div>
+          </nav>
+        )}
       </div>
     </div>
   );

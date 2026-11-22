@@ -3,7 +3,7 @@ import { readSessionToken } from "@/lib/jwt";
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const isAsset = pathname.startsWith("/_next") || pathname === "/favicon.ico" || pathname === "/icon.svg";
+  const isAsset = pathname.startsWith("/_next") || pathname === "/favicon.ico" || pathname === "/icon.svg" || pathname === "/manifest.webmanifest" || pathname === "/sw.js" || pathname === "/offline.html" || pathname === "/pwa-icon";
   if (isAsset) return NextResponse.next();
   const token = request.cookies.get("lf_session")?.value;
   const payload = token ? await readSessionToken(token) : null;

@@ -1,5 +1,6 @@
 export const NAV = [
   { href: "/", label: "Обзор", icon: "LayoutDashboard" },
+  { href: "/hunt", label: "Охота", icon: "Crosshair" },
   { href: "/agent", label: "Агент", icon: "Bot" },
   { href: "/search", label: "Поиск организаций", icon: "Search" },
   { href: "/organizations", label: "База организаций", icon: "Building2" },

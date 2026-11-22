@@ -8,6 +8,7 @@ import { advanceSite, pullParserAudit, refreshPublish } from "../services/sites"
 import { sendNextRecipient } from "../services/campaigns";
 import { runRule } from "../services/automations";
 import { runAgentTurn } from "../services/agent";
+import { markQualifyFailed, runQualify } from "../services/hunt";
 
 type JobRow = { id: string; type: string; payload: unknown; cancelRequested: boolean };
 
@@ -45,6 +46,14 @@ export async function processJob(job: JobRow) {
     }
     else if (job.type === "automation.run") await runRule(String(data.ruleId), (data.payload as Record<string, unknown>) ?? {}, Boolean(data.dryRun));
     else if (job.type === "agent.turn") await runAgentTurn(String(data.threadId));
+    else if (job.type === "hunt.qualify") {
+      try {
+        await runQualify(String(data.organizationId));
+      } catch (error) {
+        if (!(error instanceof RetryableError)) await markQualifyFailed(String(data.organizationId), error instanceof Error ? error.message : "Ошибка квалификации");
+        throw error;
+      }
+    }
     else throw new FatalJobError(`Неизвестный тип задачи ${job.type}`);
     await finishJob(job.id, { ok: true });
   } catch (error) {

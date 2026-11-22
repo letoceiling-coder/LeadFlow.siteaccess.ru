@@ -1,0 +1,5 @@
+# /etc/cron.d/leadflow-backup — ночная копия базы LeadFlow, хранится 7 дней.
+# Ставится командой: install -m 644 /opt/leadflow/deploy/backup-cron /etc/cron.d/leadflow-backup
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+40 3 * * * root mkdir -p /root/leadflow-backups && cd /opt/leadflow && docker compose exec -T postgres pg_dump -U leadflow leadflow | gzip > /root/leadflow-backups/leadflow-$(date +\%F).sql.gz && find /root/leadflow-backups -name 'leadflow-*.sql.gz' -mtime +7 -delete

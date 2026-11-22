@@ -58,6 +58,7 @@ model Tenant {
   webhooks     WebhookEvent[]
   agentThreads AgentThread[]
   optOuts      OptOut[]
+  outreach     Outreach[]
 }
 
 model User {
@@ -154,6 +155,7 @@ model Organization {
   conversations      Conversation[]
   enrichments        EnrichmentRun[]
   optOut             OptOut?
+  outreach           Outreach?
 
   @@unique([tenantId, source, externalId])
   @@index([tenantId, city])
@@ -849,4 +851,38 @@ model AgentMessage {
 
   @@index([tenantId, createdAt])
   @@index([threadId, createdAt])
+}
+
+/// Карточка охоты: квалификация по стратегии, питч, отправка вручную и follow-up.
+model Outreach {
+  id             String       @id @default(cuid())
+  tenantId       String
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  segment        String?
+  score          Int          @default(0)
+  priority       String       @default("D")
+  factors        Json?
+  card           Json?
+  cardStatus     String       @default("pending")
+  model          String?
+  costUsd        Float?
+  error          String?      @db.Text
+  status         String       @default("new")
+  rejectReason   String?
+  snoozeUntil    DateTime?
+  pitch          String?      @db.Text
+  channel        String?
+  sentAt         DateTime?
+  followUpStep   Int          @default(0)
+  nextFollowUpAt DateTime?
+  repliedAt      DateTime?
+  qualifiedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([tenantId, status, priority, score])
+  @@index([tenantId, nextFollowUpAt])
+  @@index([tenantId, sentAt])
 }
