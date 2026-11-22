@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCard, isIncomplete, priorityOf, qualifyResultSchema, strategyScore, type QualifyFacts } from "../src/lib/domain/qualify";
+import { addManualFact, buildCard, flagsFromFactors, isIncomplete, priorityOf, qualifyResultSchema, strategyScore, type QualifyFacts } from "../src/lib/domain/qualify";
 import { detectSegment } from "../src/lib/domain/segments";
 import { bannedIn, buildPitch, contactLinks, nextFollowUpAt } from "../src/lib/domain/pitch";
 import { mergeSettings } from "../src/lib/domain/settings";
@@ -57,6 +57,19 @@ describe("реальные данные парсера", () => {
   });
 });
 
+describe("ручная проверка карточки", () => {
+  it("человек подтверждает деньги — карточка C становится готовой", () => {
+    const card = buildCard({ ...base, reviewCount: 12, websiteStatus: "SOCIAL_ONLY", website: "https://vk.com/sushi" }, null);
+    expect(card.chaos[0].text).toContain("соцсети");
+    const before = strategyScore(card, null);
+    expect(before.ready).toBe(false);
+    const after = strategyScore(addManualFact(card, "money", "2 филиала"), flagsFromFactors(before.factors));
+    expect(after.ready).toBe(true);
+    expect(["A", "B"]).toContain(after.priority);
+    expect(addManualFact(card, "money", "  ").money).toHaveLength(0);
+  });
+});
+
 describe("время", () => {
   it("сутки считаются по Москве, а не по UTC", () => {
     // 22:30 UTC 23 ноября = 01:30 МСК 24 ноября
@@ -111,8 +124,8 @@ describe("карточка наблюдения и скоринг", () => {
     expect(card.chaos[0].source).toBe("websiteStatus");
     expect(card.caseRef).toBe("Доставка, Ростов");
     const scored = strategyScore(card, null);
-    // деньги 30 + хаос 25 + контакт 15 + кейс 10
-    expect(scored.score).toBe(80);
+    // деньги 30 + хаос 25 + повторяемость по нише 15 + контакт 15 + кейс 10
+    expect(scored.score).toBe(95);
     expect(scored.ready).toBe(true);
     expect(scored.priority).toBe("A");
   });
@@ -137,8 +150,10 @@ describe("карточка наблюдения и скоринг", () => {
 
   it("штрафы: хороший сайт и нерелевант", () => {
     const card = buildCard(base, null);
-    const scored = strategyScore(card, qualifyResultSchema.parse({ goodSiteAlready: true, irrelevant: true }));
+    const scored = strategyScore(card, qualifyResultSchema.parse({ goodSiteAlready: true, irrelevant: true, repeatable: false }));
+    // 30 + 25 + 15 + 10 − 40 − 50 → ниже нуля, балл не уходит в минус
     expect(scored.score).toBe(0);
+    expect(scored.priority).toBe("D");
   });
 
   it("границы приоритетов", () => {

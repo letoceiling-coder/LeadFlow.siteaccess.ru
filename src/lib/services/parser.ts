@@ -174,7 +174,7 @@ export async function syncTaskOrganizations(taskId: string) {
   }
   await prisma.parserTask.update({
     where: { id: taskId },
-      data: { organizationCount: seen.size, resultSummary: { imported, updated, unique: seen.size }, syncedAt: new Date() },
+      data: { organizationCount: seen.size, resultSummary: { imported, updated, unique: seen.size, orgIds: [...seen].slice(0, 500) }, syncedAt: new Date() },
   });
   return { imported, updated };
 }

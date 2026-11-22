@@ -6,6 +6,7 @@ import { useHunt } from "@/components/hunt/shell";
 import { useLive } from "@/components/hunt/data";
 import { Button, Glass, Notice, Ring, Segmented, Skeleton } from "@/components/hunt/ui";
 import { dayLabel, rub, type SheetStatus } from "@/components/hunt/types";
+import { HealthCard } from "@/components/hunt/health-card";
 
 type Stats = {
   days: number;
@@ -43,6 +44,8 @@ export default function HuntStatsPage() {
       <div className="sticky top-[68px] z-20 -mx-4 mt-5 px-4 py-2 backdrop-blur-md">
         <Segmented value={days} onChange={setDays} items={[{ key: "7", label: "7 дней" }, { key: "14", label: "14 дней" }, { key: "30", label: "30 дней" }]} />
       </div>
+
+      <div id="health" className="mt-3 scroll-mt-28"><HealthCard /></div>
 
       {stats.error ? <Notice tone="error">{stats.error}</Notice> : !data ? <div className="mt-3"><Skeleton rows={3} /></div> : (
         <div className="mt-3 grid grid-cols-2 gap-3">

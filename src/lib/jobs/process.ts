@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "../db";
 import { ApiError, FatalJobError, RetryableError } from "../errors";
 import { finishJob, failJob, reschedule } from "./queue";
+import { logEvent } from "../log";
 import { refreshParserTask, runSync, submitParserTask } from "../services/parser";
 import { runAnalysis } from "../services/analysis";
 import { advanceSite, pullParserAudit, refreshPublish } from "../services/sites";
@@ -24,6 +25,8 @@ export async function processJob(job: JobRow) {
     return;
   }
   const data = payload(job);
+  const started = Date.now();
+  const base = { job: job.id, type: job.type, tenant: job.tenantId };
   try {
     if (job.type === "parser.submit") await submitParserTask(String(data.parserTaskId));
     else if (job.type === "parser.poll") {
@@ -65,7 +68,13 @@ export async function processJob(job: JobRow) {
     else if (job.type === "project.webhook") await deliverWebhook(String(data.projectId), String(data.event), job.tenantId);
     else throw new FatalJobError(`Неизвестный тип задачи ${job.type}`);
     await finishJob(job.id, { ok: true });
+    logEvent("job.done", { ...base, ms: Date.now() - started });
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const code = error instanceof ApiError ? error.code : error instanceof RetryableError ? "retry" : error instanceof FatalJobError ? "fatal" : "error";
+    // «Поиск ещё идёт» — штатное ожидание, а не сбой: в журнал не пишем.
+    const routine = error instanceof RetryableError && !error.consumeAttempt && job.type === "parser.poll";
+    if (!routine) logEvent("job.failed", { ...base, ms: Date.now() - started, code, error: message.slice(0, 300) }, error instanceof RetryableError ? "warn" : "error");
     if (error instanceof RetryableError) {
       if (error.consumeAttempt) await failJob(job.id, error, error.delayMs);
       else await reschedule(job.id, error.delayMs);

@@ -27,6 +27,7 @@ export type HuntItem = {
   followUpStep: number;
   nextFollowUpAt: string | null;
   followUpDue: boolean;
+  actionDue: boolean;
   repliedAt: string | null;
   channel: string | null;
   error: string | null;
@@ -42,6 +43,8 @@ export type Today = {
   queued: number;
   failed: number;
   incomplete: number;
+  review: HuntItem[];
+  reviewTotal: number;
   ai: { ready: boolean; reason: string | null };
   sentToday: number;
   dailyLimit: number;
@@ -106,6 +109,7 @@ export const SOURCE_LABEL: Record<string, string> = {
   services: "услуги",
   features: "особенности",
   phones: "телефоны",
+  manual: "вы проверили",
   socials: "соцсети",
   emails: "почта",
   photoCount: "фото",
@@ -118,6 +122,7 @@ export const STATUS_LABEL: Record<string, string> = {
   snoozed: "Отложена",
   sent: "Ждём ответа",
   replied: "Ответил",
+  demo: "Демо показано",
   call: "Созвон",
   estimate: "Смета",
   won: "Сделка",

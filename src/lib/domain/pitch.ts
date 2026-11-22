@@ -155,3 +155,12 @@ export function contactLinks(contacts: { kind: string; value: string }[], text: 
   const seen = new Set<string>();
   return out.filter((item) => (seen.has(item.href) ? false : (seen.add(item.href), true)));
 }
+
+/** Следующие сообщения после ответа клиента: квалифицирующий вопрос, демо, созвон (§6–§7). */
+export function replyTemplates(scenario: { demo: string; product: string } | null) {
+  return [
+    { key: "question", label: "Уточнить", text: "Спасибо, что ответили! Подскажите, сколько заявок в день сейчас приходит и через что чаще всего — телефон, мессенджеры, соцсети?" },
+    { key: "demo", label: "Показать демо", text: `Собрал короткое демо под вас${scenario ? ` — ${scenario.demo.toLowerCase()}` : ""}. Можно открыть с телефона, займёт минуту. Скинуть ссылку?` },
+    { key: "call", label: "Созвон 15 мин", text: "Предлагаю созвониться на 15 минут: покажу демо на вашем примере и скажу честную вилку по цене. Когда удобно — сегодня или завтра?" },
+  ];
+}

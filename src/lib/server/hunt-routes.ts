@@ -9,8 +9,12 @@ import {
   decide,
   decisionSchema,
   dialogs,
+  addFact,
   enqueueQualify,
+  factSchema,
   followUpDone,
+  nextItem,
+  searches,
   getItem,
   markSent,
   pitchSchema,
@@ -26,6 +30,7 @@ import {
 } from "../services/hunt";
 import { webhookSecret, createProject, getProject, listProjects, projectCreateSchema, projectExport, projectPatchSchema, resendWebhook, updateProject } from "../services/projects";
 import { queueFullSync, sheetStatus } from "../services/sheets";
+import { systemHealth } from "../services/health";
 
 function allow(session: AppSession, permission: string) {
   if (!can(session.role, permission)) throw new ApiError(403, "Недостаточно прав для этого действия", "forbidden");
@@ -63,6 +68,18 @@ export async function huntRoutes(request: Request, session: AppSession, path: st
     return json(await stats(tenantId, int(url.searchParams.get("days"), 7, 1, 90)));
   }
   if (section === "segments" && method === "GET") return json(SEGMENTS);
+  if (section === "next" && method === "GET") {
+    allow(session, "org.read");
+    return json(await nextItem(tenantId, url.searchParams.get("after")));
+  }
+  if (section === "searches" && method === "GET") {
+    allow(session, "org.read");
+    return json(await searches(tenantId));
+  }
+  if (section === "health" && method === "GET") {
+    allow(session, "org.read");
+    return json(await systemHealth(tenantId));
+  }
   if (section === "scenarios" && method === "GET") return json({ scenarios: SCENARIOS, stages: PROJECT_STAGES });
   if (section === "qualify" && method === "POST") {
     allow(session, "analysis.manage");
@@ -135,6 +152,7 @@ export async function huntRoutes(request: Request, session: AppSession, path: st
   }
   allow(session, "lead.manage");
   if (itemAction === "decide" && method === "POST") return json(await decide(tenantId, session.userId, itemId, decisionSchema.parse(await readJson(request))));
+  if (itemAction === "fact" && method === "POST") return json(await addFact(tenantId, session.userId, itemId, factSchema.parse(await readJson(request))));
   if (itemAction === "pitch" && path[3] === "rewrite" && method === "POST") return json(await rewritePitch(tenantId, itemId));
   if (itemAction === "pitch" && method === "PUT") return json(await savePitch(tenantId, itemId, pitchSchema.parse(await readJson(request)).text));
   if (itemAction === "sent" && method === "POST") return json(await markSent(tenantId, session.userId, session.role, itemId, sentSchema.parse(await readJson(request))));

@@ -17,7 +17,7 @@ export const PROJECT_SHEET = "Проекты";
 const LEAD_HEADER = ["id", "Компания", "Город", "Ниша", "Приоритет", "Балл", "Статус", "Деньги", "Хаос", "Крючок", "Телефоны", "Соцсети", "Источник", "Квалифицирован", "Отправлено", "Канал", "Напоминаний", "След. напоминание", "Ответ", "Обновлено"];
 const PROJECT_HEADER = ["id", "Создан", "Проект", "Компания", "Город", "Сценарий", "Продукт", "Этап", "Сумма, ₽", "Дедлайн", "Прогресс", "Контакт", "Заметки", "Обновлено", "JSON"];
 
-const STATUS: Record<string, string> = { new: "Новая", approved: "В работе", rejected: "Отклонена", snoozed: "Отложена", sent: "Отправлено", replied: "Ответил", call: "Созвон", estimate: "Смета", won: "Сделка", lost: "Отказ", sleeping: "Спящий" };
+const STATUS: Record<string, string> = { new: "Новая", approved: "В работе", rejected: "Отклонена", snoozed: "Отложена", sent: "Отправлено", replied: "Ответил", demo: "Демо", call: "Созвон", estimate: "Смета", won: "Сделка", lost: "Отказ", sleeping: "Спящий" };
 
 function safeRow(row: Record<string, unknown>) {
   return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, sheetSafe(value)]));

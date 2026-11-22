@@ -17,6 +17,7 @@ export function ItemCard({ item, onOpen, meta, actions }: { item: HuntItem; onOp
           <span className="line-clamp-2 text-[17px] font-semibold leading-6">{item.organization.name}</span>
         </div>
         {hook ? <p className="mt-0.5 line-clamp-2 text-[15px] leading-[21px] text-[var(--h-muted)]">{hook}</p> : null}
+        {item.card?.money[0] ? <p className="mt-1 truncate text-[13px] text-[#8ff0bd]">₽ {item.card.money[0].text}</p> : null}
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[var(--h-faint)]">
           {meta ?? (
             <>

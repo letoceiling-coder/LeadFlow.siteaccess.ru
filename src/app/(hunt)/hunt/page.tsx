@@ -1,14 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Loader2, Plus, RotateCcw, X } from "lucide-react";
 import { useHunt } from "@/components/hunt/shell";
 import { post, useLive } from "@/components/hunt/data";
 import { ItemCard } from "@/components/hunt/item-card";
+import { HealthStrip } from "@/components/hunt/health-card";
 import { Button, Chip, Empty, Glass, Notice, Segmented, Skeleton, cx, errorText, useToast } from "@/components/hunt/ui";
-import { dayLabel, type Dialogs, type Today } from "@/components/hunt/types";
+import { STATUS_LABEL, dayLabel, type Dialogs, type HuntItem, type Today } from "@/components/hunt/types";
 
-type Tab = "new" | "write" | "remind";
+type Tab = "new" | "review" | "write" | "remind";
 
 function greeting(timeZone: string) {
   const hour = Number(new Intl.DateTimeFormat("ru-RU", { hour: "numeric", hourCycle: "h23", timeZone }).format(new Date()));
@@ -20,33 +21,46 @@ export default function HuntTodayPage() {
   const toast = useToast();
   const [picked, setTab] = useState<Tab | null>(null);
   const [segment, setSegment] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
   const todayRes = useLive<Today>("/api/hunt/today?limit=50", version, 15000);
-  const dialogs = useLive<Dialogs>("/api/hunt/dialogs", version);
+  const dialogs = useLive<Dialogs>("/api/hunt/dialogs", version, 30000);
   const data = todayRes.data;
-  // Напоминания — самые дешёвые ответы: если они есть, лента открывается на них.
-  const tab: Tab = picked ?? (data?.followUps ? "remind" : "new");
+  // Сначала срочное: напоминания и сроки по диалогам — самые дешёвые ответы.
+  const tab: Tab = picked ?? (data?.followUps ? "remind" : data?.total ? "new" : data?.reviewTotal ? "review" : "new");
+
+  useEffect(() => { setHidden(new Set()); }, [data]);
+
+  // Счётчик на иконке приложения (Android/Chrome, iOS 16.4+ для установленного PWA).
+  useEffect(() => {
+    if (!data) return;
+    const badge = data.followUps + data.approved;
+    const nav = navigator as Navigator & { setAppBadge?: (n?: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
+    if (badge && nav.setAppBadge) void nav.setAppBadge(badge).catch(() => undefined);
+    else if (nav.clearAppBadge) void nav.clearAppBadge().catch(() => undefined);
+  }, [data]);
 
   const segments = useMemo(() => {
     const map = new Map<string, string>();
     for (const item of data?.items ?? []) if (item.segment && item.segmentLabel) map.set(item.segment, item.segmentLabel);
     return [...map.entries()];
   }, [data]);
-  const items = (data?.items ?? []).filter((item) => !segment || item.segment === segment);
+  const visible = (list: HuntItem[]) => list.filter((item) => !hidden.has(item.id));
+  const items = visible(data?.items ?? []).filter((item) => !segment || item.segment === segment);
 
+  /** Оптимистично: строка исчезает сразу, при ошибке возвращается. */
   async function quick(id: string, action: "approve" | "reject", name: string) {
-    setBusyId(id);
+    setHidden((prev) => new Set(prev).add(id));
+    if (typeof navigator.vibrate === "function") navigator.vibrate(8);
     try {
       await post(`/api/hunt/${id}/decide`, { action, reason: action === "reject" ? "Быстрый отказ" : undefined });
       refresh();
       toast({
-        text: action === "approve" ? `«${name}» — во вкладке «Написать»` : `«${name}» отклонена`,
+        text: action === "approve" ? `«${name}» — во «Написать»` : `«${name}» отклонена`,
         action: { label: "Отменить", run: () => { void post(`/api/hunt/${id}/decide`, { action: "undo" }).then(refresh); } },
       });
     } catch (reason) {
+      setHidden((prev) => { const next = new Set(prev); next.delete(id); return next; });
       toast({ text: errorText(reason), tone: "error" });
-    } finally {
-      setBusyId(null);
     }
   }
 
@@ -73,37 +87,39 @@ export default function HuntTodayPage() {
 
       {data ? (
         <div className="mt-5 grid grid-cols-3 gap-2">
-          <Glass className="px-4 py-3">
-            <div className={cx("text-[28px] font-semibold leading-8 tabular-nums", left === 0 && "text-[var(--h-hot)]")}>{data.sentToday}<span className="text-base text-[var(--h-faint)]">/{data.dailyLimit}</span></div>
+          <Glass className="px-3.5 py-3">
+            <div className={cx("text-[26px] font-semibold leading-8 tabular-nums", left === 0 && "text-[var(--h-hot)]")}>{data.sentToday}<span className="text-base text-[var(--h-faint)]">/{data.dailyLimit}</span></div>
             <div className="mt-0.5 text-xs text-[var(--h-muted)]">отправлено</div>
           </Glass>
-          <button onClick={() => setTab("write")} className="text-left"><Glass tint={data.approved ? "yellow" : null} className="px-4 py-3">
-            <div className="text-[28px] font-semibold leading-8 tabular-nums">{data.approved}</div>
+          <button onClick={() => setTab("write")} className="text-left"><Glass tint={data.approved ? "yellow" : null} className="px-3.5 py-3">
+            <div className="text-[26px] font-semibold leading-8 tabular-nums">{data.approved}</div>
             <div className="mt-0.5 text-xs text-[var(--h-muted)]">написать</div>
           </Glass></button>
-          <button onClick={() => setTab("remind")} className="text-left"><Glass tint={data.followUps ? "orange" : null} className="px-4 py-3">
-            <div className="text-[28px] font-semibold leading-8 tabular-nums">{data.followUps}</div>
-            <div className="mt-0.5 text-xs text-[var(--h-muted)]">напомнить</div>
+          <button onClick={() => setTab("remind")} className="text-left"><Glass tint={data.followUps ? "orange" : null} className="px-3.5 py-3">
+            <div className="text-[26px] font-semibold leading-8 tabular-nums">{data.followUps}</div>
+            <div className="mt-0.5 text-xs text-[var(--h-muted)]">срочно</div>
           </Glass></button>
         </div>
       ) : null}
 
-      <div className="sticky top-[68px] z-20 -mx-4 mt-5 px-4 py-2 backdrop-blur-md">
+      <div className="mt-3"><HealthStrip /></div>
+
+      <div className="sticky top-[68px] z-20 -mx-4 mt-3 px-4 py-2 backdrop-blur-md">
         <Segmented<Tab>
           value={tab}
           onChange={setTab}
           items={[
             { key: "new", label: "Новые", count: data?.total },
-            { key: "write", label: "Написать", count: data?.approved },
-            { key: "remind", label: "Напомнить", count: data?.followUps, alert: true },
+            { key: "review", label: "Проверка", count: data?.reviewTotal },
+            { key: "write", label: "Писать", count: data?.approved },
+            { key: "remind", label: "Срочно", count: data?.followUps, alert: true },
           ]}
         />
       </div>
 
       <div className="mt-3 space-y-3">
-        {data && !data.ai.ready ? <Notice tone="warn">AI-скоринг выключен: {data.ai.reason} Карточки собираются по данным источника — меньше фактов «денег», поэтому в ленту попадает меньше.</Notice> : null}
         {data?.queued ? <Notice><span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Скоринг идёт: {data.queued} карточек. Лента обновится сама.</span></Notice> : null}
-        {data?.incomplete && tab === "new" ? <p className="px-1 text-xs text-[var(--h-faint)]">Неполных карточек от парсера: {data.incomplete} — без названия или контактов, в ленту не попадают.</p> : null}
+        {data && !data.ai.ready && tab === "new" ? <Notice tone="warn">AI-скоринг выключен: {data.ai.reason} Без AI «деньги» видны только по отзывам — проверьте карточки во вкладке «Проверить».</Notice> : null}
         {data?.failed ? <Notice tone="warn"><span className="flex items-center justify-between gap-3">Не прошли скоринг: {data.failed}. <button onClick={retry} className="inline-flex items-center gap-1 font-semibold text-[var(--h-accent)]"><RotateCcw className="h-4 w-4" /> Повторить</button></span></Notice> : null}
 
         {tab === "new" ? (
@@ -117,9 +133,11 @@ export default function HuntTodayPage() {
               ) : null}
               {items.length === 0 ? (
                 <Empty
-                  title="Новых карточек нет"
-                  text="Сюда попадают только A и B с подтверждённым фактом денег и хаоса. Запустите поиск — карточки сами пройдут скоринг."
-                  action={<Button variant="accent" size="lg" onClick={() => open("panel", "search")}><Plus className="h-5 w-5" /> Новый поиск</Button>}
+                  title="Готовых карточек нет"
+                  text={data?.reviewTotal ? `Есть ${data.reviewTotal} на проверку: хаос и контакт найдены, нужен факт «денег» — подтвердите его глазами.` : "Сюда попадают A и B с подтверждённым фактом денег и хаоса. Запустите поиск — карточки сами пройдут скоринг."}
+                  action={data?.reviewTotal
+                    ? <Button variant="accent" size="lg" onClick={() => setTab("review")}>Проверить {data.reviewTotal}</Button>
+                    : <Button variant="accent" size="lg" onClick={() => open("panel", "search")}><Plus className="h-5 w-5" /> Новый поиск</Button>}
                 />
               ) : items.map((item) => (
                 <ItemCard
@@ -128,12 +146,24 @@ export default function HuntTodayPage() {
                   onOpen={() => open("item", item.id)}
                   actions={
                     <div className="flex gap-1.5">
-                      <button aria-label={`Отклонить ${item.organization.name}`} disabled={busyId === item.id} onClick={() => quick(item.id, "reject", item.organization.name)} className="glass grid h-11 w-11 place-items-center rounded-full text-[#ff9b9b] disabled:opacity-40"><X className="h-5 w-5" /></button>
-                      <button aria-label={`Взять в работу ${item.organization.name}`} disabled={busyId === item.id} onClick={() => quick(item.id, "approve", item.organization.name)} className="grid h-11 w-11 place-items-center rounded-full bg-[var(--h-accent)] text-[var(--h-accent-ink)] disabled:opacity-40"><Check className="h-5 w-5" strokeWidth={2.6} /></button>
+                      <button aria-label={`Отклонить ${item.organization.name}`} onClick={() => quick(item.id, "reject", item.organization.name)} className="glass grid h-11 w-11 place-items-center rounded-full text-[#ff9b9b]"><X className="h-5 w-5" /></button>
+                      <button aria-label={`Взять в работу ${item.organization.name}`} onClick={() => quick(item.id, "approve", item.organization.name)} className="grid h-11 w-11 place-items-center rounded-full bg-[var(--h-accent)] text-[var(--h-accent-ink)]"><Check className="h-5 w-5" strokeWidth={2.6} /></button>
                     </div>
                   }
                 />
               ))}
+              {data?.incomplete ? <p className="px-1 text-xs text-[var(--h-faint)]">Неполных карточек от парсера: {data.incomplete} — без названия или контактов, в ленту не попадают.</p> : null}
+            </>
+          )
+        ) : null}
+
+        {tab === "review" ? (
+          !data ? <Skeleton rows={3} /> : visible(data.review).length === 0 ? (
+            <Empty title="Проверять нечего" text="Здесь появляются карточки класса C: хаос и контакт есть, а «денег» парсер не увидел. Вы подтверждаете факт одним касанием — карточка пересчитывается." />
+          ) : (
+            <>
+              <p className="px-1 text-sm text-[var(--h-muted)]">Откройте карточку, посмотрите источник и отметьте недостающий факт, если он есть. Нет — отклоните.</p>
+              {visible(data.review).map((item) => <ItemCard key={item.id} item={item} onOpen={() => open("item", item.id)} meta={<span className="text-[#ffe680]">Нужен факт «{item.card?.money.length ? "хаоса" : "денег"}» · {item.score} баллов</span>} />)}
             </>
           )
         ) : null}
@@ -146,9 +176,14 @@ export default function HuntTodayPage() {
 
         {tab === "remind" ? (
           !dialogs.data ? <Skeleton rows={3} /> : dialogs.data.due.length === 0 ? (
-            <Empty title="Напоминать некому" text="Напоминания приходят через 3, 7 и 14 дней после первого сообщения, если клиент молчит." />
+            <Empty title="Срочного нет" text="Здесь напоминания через 3, 7 и 14 дней и сроки по диалогам: ответить в течение суток, созвон, смета." />
           ) : dialogs.data.due.map((item) => (
-            <ItemCard key={item.id} item={item} onOpen={() => open("item", item.id)} meta={<span className="text-[#ffc3a6]">Напоминание {item.followUpStep + 1} из 3 · первое {dayLabel(item.sentAt)}</span>} />
+            <ItemCard
+              key={item.id}
+              item={item}
+              onOpen={() => open("item", item.id)}
+              meta={<span className="text-[#ffc3a6]">{item.status === "sent" ? `Напоминание ${item.followUpStep + 1} из 3 · написали ${dayLabel(item.sentAt)}` : `${STATUS_LABEL[item.status]} — пора следующий шаг`}</span>}
+            />
           ))
         ) : null}
       </div>

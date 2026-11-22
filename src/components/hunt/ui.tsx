@@ -49,7 +49,7 @@ export function IconButton({ label, children, className, dot, ...props }: Button
 
 export function Segmented<T extends string>({ items, value, onChange, className }: { items: { key: T; label: string; count?: number; alert?: boolean }[]; value: T; onChange: (key: T) => void; className?: string }) {
   return (
-    <div role="tablist" className={cx("glass flex gap-1 rounded-full p-1", className)}>
+    <div role="tablist" className={cx("glass no-scrollbar flex gap-0.5 overflow-x-auto rounded-full p-1", className)}>
       {items.map((item) => {
         const on = item.key === value;
         return (
@@ -58,9 +58,9 @@ export function Segmented<T extends string>({ items, value, onChange, className 
             role="tab"
             aria-selected={on}
             onClick={() => onChange(item.key)}
-            className={cx("flex h-10 min-w-0 flex-1 items-center justify-center gap-1 rounded-full px-2 text-[13px] font-medium transition sm:gap-1.5 sm:px-3 sm:text-sm", on ? "bg-[var(--h-text)] text-[#111]" : "text-[var(--h-muted)] hover:text-[var(--h-text)]")}
+            className={cx("flex h-10 flex-auto shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full px-2.5 text-[13px] font-medium transition sm:gap-1.5 sm:px-3 sm:text-sm", on ? "bg-[var(--h-text)] text-[#111]" : "text-[var(--h-muted)] hover:text-[var(--h-text)]")}
           >
-            <span className="truncate">{item.label}</span>
+            <span>{item.label}</span>
             {item.count != null ? (
               <span className={cx("tabular-nums", on ? "text-[#111]/55" : item.alert && item.count ? "text-[var(--h-hot)]" : "text-[var(--h-faint)]")}>{item.count}</span>
             ) : null}

@@ -9,7 +9,7 @@ import { Button, Chip, Field, Notice, Segmented, Sheet, cx, errorText, inputClas
 import { dayLabel } from "./types";
 
 type Template = { id: string; name: string; params: { city: string; category: string; searchQuery?: string; maxResults: number } };
-type Task = { id: string; status: string; input: { city?: string; category?: string }; organizationCount: number | null; createdAt: string; error: string | null; syncedAt: string | null };
+type Search = { id: string; city: string; category: string; requested: number | null; status: string; syncedAt: string | null; createdAt: string; error: string | null; received: number | null; funnel: { incomplete: number; noFact: number; review: number; ready: number; queued: number } | null };
 
 /** Категории под активный контур стратегии: доставка еды и автосервисы, плюс мастера. */
 const CATEGORIES = ["Доставка еды", "Суши-бар", "Пиццерия", "Автосервис", "Шиномонтаж", "Натяжные потолки", "Стоматология", "База отдыха"];
@@ -24,16 +24,17 @@ export function SearchPanel({ open }: { open: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const templates = useLive<Template[]>(open ? "/api/parser/templates" : null, version);
-  const tasksUrl = open ? "/api/parser/tasks" : null;
-  const tasks = useLive<Task[]>(tasksUrl, version, 5000);
-  const running = (tasks.data ?? []).some((task) => ["queued", "running"].includes(task.status) || (task.status === "completed" && !task.syncedAt));
+  const tasks = useLive<Search[]>(open ? "/api/hunt/searches" : null, version, 5000);
+  const running = (tasks.data ?? []).some((task) => ["queued", "running"].includes(task.status) || (task.status === "completed" && !task.syncedAt) || Boolean(task.funnel?.queued));
+  const [duplicate, setDuplicate] = useState<null | { city: string; category: string; maxResults: number }>(null);
 
-  async function launch(params: { city: string; category: string; maxResults: number; searchQuery?: string }) {
+  async function launch(params: { city: string; category: string; maxResults: number; searchQuery?: string }, force = false) {
     setBusy(true);
     setError("");
+    setDuplicate(null);
     try {
-      const result = await post<{ duplicate?: boolean }>("/api/parser/tasks", { ...params, searchQuery: params.searchQuery ?? "" });
-      if (result.duplicate) toast({ text: "Такой поиск уже был за сутки — карточки в базе" });
+      const result = await post<{ duplicate?: boolean }>("/api/parser/tasks", { ...params, searchQuery: params.searchQuery ?? "", force });
+      if (result.duplicate) setDuplicate({ city: params.city, category: params.category, maxResults: params.maxResults });
       else toast({ text: `Ищем: ${params.category}, ${params.city}. Карточки сами пройдут скоринг` });
       await tasks.reload();
       refresh();
@@ -83,6 +84,12 @@ export function SearchPanel({ open }: { open: boolean }) {
     >
       <div className="space-y-6">
         {error ? <Notice tone="error">{error}</Notice> : null}
+        {duplicate ? (
+          <Notice tone="warn">
+            Такой поиск уже был за сутки — его карточки в базе. Если прошлый раз парсер вернул мало, можно повторить.
+            <button className="mt-2 block font-semibold text-[var(--h-accent)]" onClick={() => launch(duplicate, true)}>Искать заново</button>
+          </Notice>
+        ) : null}
         <div className="space-y-4">
           <Field label="Город"><input className={inputClass} value={city} onChange={(event) => setCity(event.target.value)} /></Field>
           <Field label="Что ищем"><input className={inputClass} value={category} onChange={(event) => setCategory(event.target.value)} placeholder="Например, доставка еды" /></Field>
@@ -119,15 +126,27 @@ export function SearchPanel({ open }: { open: boolean }) {
             <div className="glass divide-y divide-[var(--h-line)] overflow-hidden rounded-2xl">
               {(tasks.data ?? []).slice(0, 6).map((task) => {
                 const saving = task.status === "completed" && !task.syncedAt;
+                const f = task.funnel;
                 return (
-                  <div key={task.id} className="flex min-h-14 items-center justify-between gap-3 px-4 py-2.5">
-                    <div className="min-w-0">
-                      <div className="truncate text-[15px]">{task.input.category} · {task.input.city}</div>
-                      <div className="text-xs text-[var(--h-faint)]">{dayLabel(task.createdAt)}{task.organizationCount != null ? ` · ${task.organizationCount} карточек` : ""}{task.error ? ` · ${task.error}` : ""}</div>
+                  <div key={task.id} className="px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0 truncate text-[15px]">{task.category} · {task.city}</div>
+                      <span className={cx("shrink-0 rounded-full px-2.5 py-1 text-xs font-medium", task.status === "failed" ? "bg-[rgba(255,100,100,0.15)] text-[#ff9b9b]" : task.status === "completed" && !saving ? "bg-[rgba(59,224,138,0.14)] text-[#8ff0bd]" : "bg-[rgba(255,214,10,0.14)] text-[var(--h-accent)]")}>
+                        {saving ? "сохраняем" : TASK_STATUS[task.status] ?? task.status}
+                      </span>
                     </div>
-                    <span className={cx("shrink-0 rounded-full px-2.5 py-1 text-xs font-medium", task.status === "failed" ? "bg-[rgba(255,100,100,0.15)] text-[#ff9b9b]" : task.status === "completed" && !saving ? "bg-[rgba(59,224,138,0.14)] text-[#8ff0bd]" : "bg-[rgba(255,214,10,0.14)] text-[var(--h-accent)]")}>
-                      {saving ? "сохраняем" : TASK_STATUS[task.status] ?? task.status}
-                    </span>
+                    <div className="mt-1 text-xs text-[var(--h-faint)]">
+                      {dayLabel(task.createdAt)}{task.received != null ? ` · пришло ${task.received}${task.requested ? ` из ${task.requested}` : ""}` : ""}{task.error ? ` · ${task.error}` : ""}
+                    </div>
+                    {f ? (
+                      <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
+                        <span className="rounded-full bg-[rgba(255,214,10,0.14)] px-2 py-0.5 text-[var(--h-accent)]">в ленте {f.ready}</span>
+                        <span className="rounded-full bg-white/10 px-2 py-0.5">проверить {f.review}</span>
+                        <span className="rounded-full bg-white/10 px-2 py-0.5">без фактов {f.noFact - f.review}</span>
+                        {f.incomplete ? <span className="rounded-full bg-white/10 px-2 py-0.5">неполных {f.incomplete}</span> : null}
+                        {f.queued ? <span className="rounded-full bg-white/10 px-2 py-0.5">в скоринге {f.queued}</span> : null}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}

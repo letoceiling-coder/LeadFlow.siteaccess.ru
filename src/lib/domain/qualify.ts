@@ -159,6 +159,16 @@ export function buildCard(facts: QualifyFacts, ai: QualifyResult | null): Observ
     chaos.push({ text: "Нет своего сайта — только карточка на картах", source: "websiteStatus", kind: "fact" });
   }
 
+  // Хаос без AI — по статусу сайта: соцсеть или агрегатор вместо сайта, сайт не открывается (§1, «признак хаоса»).
+  const siteChaos: Record<string, string> = {
+    SOCIAL_ONLY: "Вместо сайта — страница в соцсети",
+    AGGREGATOR_ONLY: "Своего сайта нет — только агрегатор",
+    BROKEN_WEBSITE: "Сайт из карточки не открывается",
+  };
+  if (siteChaos[facts.websiteStatus] && !chaos.some((item) => item.source === "websiteStatus" || item.source === "website")) {
+    chaos.push({ text: siteChaos[facts.websiteStatus], source: "websiteStatus", kind: "fact" });
+  }
+
   const builder = builderHost(facts.website);
   if (builder && !chaos.some((item) => item.source === "website")) {
     chaos.push({ text: `Сайт на бесплатном конструкторе (${builder}) — без каталога и заявок`, source: "website", kind: "fact" });
@@ -200,6 +210,8 @@ export function rub(value: number) {
   return `${Math.round(value).toLocaleString("ru-RU")} ₽`;
 }
 
+const REPEATABLE_SEGMENTS = new Set<string>(["A1", "A2", "A5", "A6", "B1", "B2", "B3", "B4"]);
+
 /** Скоринг 0–100 по §4. */
 export function strategyScore(card: ObservationCard, ai: QualifyResult | null) {
   const hasContact = card.contact.length > 0;
@@ -209,7 +221,9 @@ export function strategyScore(card: ObservationCard, ai: QualifyResult | null) {
 
   push("money", "Признак денег", 30, card.money.length > 0, card.money.map((item) => item.text).join("; ") || "Подтверждённого признака денег нет");
   push("chaos", "Явный хаос", 25, card.chaos.length > 0, card.chaos.map((item) => item.text).join("; ") || "Подтверждённого хаоса нет");
-  push("repeatable", "Повторяемый процесс", 15, ai?.repeatable === true, ai?.repeatable == null ? "Не оценивалось" : ai.repeatable ? "Бронь, каталог, заказы — повторяются" : "Разовая услуга");
+  // Без оценки AI повторяемость берётся из ниши: доставка, автосервис, клиники, базы, дилеры живут на повторных заказах.
+  const bySegment = ai?.repeatable == null && card.segment != null && REPEATABLE_SEGMENTS.has(card.segment);
+  push("repeatable", "Повторяемый процесс", 15, ai?.repeatable === true || bySegment, ai?.repeatable == null ? (bySegment ? "По нише: заказы, запись или бронь повторяются" : "Не оценивалось") : ai.repeatable ? "Бронь, каталог, заказы — повторяются" : "Разовая услуга");
   push("contact", "Публичный контакт", 15, hasContact, hasContact ? `${card.contact.length} контакт(ов) в источнике` : "Контактов нет");
   push("growth", "Признаки роста", 10, card.growth.length > 0, card.growth.map((item) => item.text).join("; ") || "Не найдено");
   push("case", "Есть кейс NEEKLO", 10, Boolean(card.caseRef), card.caseRef ?? "Кейса под эту нишу нет");
@@ -224,6 +238,26 @@ export function strategyScore(card: ObservationCard, ai: QualifyResult | null) {
 }
 
 export type Priority = "A" | "B" | "C" | "D";
+
+/** Флаги прошлой оценки AI, восстановленные из сохранённых факторов, — чтобы пересчитать балл после ручного факта. */
+export function flagsFromFactors(factors: StrategyFactor[] | null | undefined): QualifyResult {
+  const hit = (key: string) => Boolean(factors?.find((item) => item.key === key)?.hit);
+  const repeat = factors?.find((item) => item.key === "repeatable");
+  return qualifyResultSchema.parse({
+    repeatable: repeat ? (repeat.hit && !repeat.reason.startsWith("По нише") ? true : repeat.reason === "Разовая услуга" ? false : null) : null,
+    microBusiness: hit("micro"),
+    goodSiteAlready: hit("goodSite"),
+    irrelevant: hit("irrelevant"),
+  });
+}
+
+/** Факт, который подтвердил человек (§3, шаг 5: «факт реален?»). Стоп-правило не нарушается: факт есть, просто источник — проверка глазами. */
+export function addManualFact(card: ObservationCard, kind: "money" | "chaos", text: string): ObservationCard {
+  const clean = text.trim().slice(0, 200);
+  const list = card[kind];
+  if (!clean || list.some((item) => item.text.toLowerCase() === clean.toLowerCase())) return card;
+  return { ...card, [kind]: [...list, { text: clean, source: "manual", kind: "fact" }] };
+}
 
 /** A — 75+, B — 60–74. Без подтверждённых фактов карточка не поднимается выше C (стоп-правило §5). */
 export function priorityOf(score: number, ready: boolean): Priority {

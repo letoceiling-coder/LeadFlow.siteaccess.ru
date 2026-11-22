@@ -11,14 +11,17 @@ import { activity, assertBudget, audit, getSettings, moveLead, recordCost } from
 import {
   QUALIFY_PROMPT_VERSION,
   QUALIFY_THRESHOLD,
+  addManualFact,
   buildCard,
   buildQualifyPrompt,
+  flagsFromFactors,
   isIncomplete,
   qualifyResultSchema,
   strategyScore,
   type ObservationCard,
   type QualifyFacts,
   type QualifyResult,
+  type StrategyFactor,
 } from "../domain/qualify";
 import { FOLLOW_UP_DAYS, bannedIn, buildPitch, contactLinks, followUpText, nextFollowUpAt } from "../domain/pitch";
 import { detectSegment, segmentInfo } from "../domain/segments";
@@ -28,6 +31,9 @@ import { queueSheet } from "./sheets";
 /** Статусы, в которых карточку ещё можно (пере)квалифицировать, взять, отклонить или отложить. Дальше — живой диалог. */
 const OPEN = ["new", "snoozed", "approved", "rejected"];
 const DAY = 24 * 60 * 60 * 1000;
+/** Живой диалог: после ответа у каждого шага есть срок (§3: созвон в течение суток, смета +24ч). */
+const LIVE = ["replied", "demo", "call", "estimate"];
+const NEXT_STEP_HOURS: Record<string, number> = { replied: 24, demo: 48, call: 24, estimate: 72 };
 
 /* ───────────── Квалификация ───────────── */
 
@@ -267,22 +273,33 @@ export async function today(tenantId: string, limit = 20) {
     organization: contactableOrg,
   };
   const take = Number.isFinite(limit) ? Math.min(Math.max(1, limit), 50) : 20;
-  const [rows, total, approved, followUps, queued, failed, sent, incomplete] = await Promise.all([
+  const reviewWhere: Prisma.OutreachWhereInput = {
+    tenantId,
+    cardStatus: "no_fact",
+    score: { gte: 40 },
+    OR: [{ status: "new" }, { status: "snoozed", snoozeUntil: { lte: now } }],
+    organization: contactableOrg,
+  };
+  const [rows, total, approved, followUps, queued, failed, sent, incomplete, reviewRows, reviewTotal] = await Promise.all([
     prisma.outreach.findMany({ where, include: listInclude, orderBy: [{ priority: "asc" }, { score: "desc" }], take }),
     prisma.outreach.count({ where }),
     prisma.outreach.count({ where: { tenantId, status: "approved", organization: contactableOrg } }),
-    prisma.outreach.count({ where: { tenantId, status: "sent", nextFollowUpAt: { lte: end }, organization: contactableOrg } }),
+    prisma.outreach.count({ where: { tenantId, status: { in: [...LIVE, "sent"] }, nextFollowUpAt: { lte: end }, organization: contactableOrg } }),
     prisma.outreach.count({ where: { tenantId, cardStatus: "queued" } }),
     prisma.outreach.count({ where: { tenantId, cardStatus: "failed" } }),
     sentCount(tenantId, start),
     prisma.outreach.count({ where: { tenantId, cardStatus: "incomplete" } }),
+    prisma.outreach.findMany({ where: reviewWhere, include: listInclude, orderBy: { score: "desc" }, take: 30 }),
+    prisma.outreach.count({ where: reviewWhere }),
   ]);
-  const blocked = await suppressedOrgIds(tenantId, rows);
+  const blocked = await suppressedOrgIds(tenantId, [...rows, ...reviewRows]);
   const ai = await prisma.integration.findUnique({ where: { tenantId_provider: { tenantId, provider: "openrouter" } }, select: { status: true, lastError: true } });
   const aiReady = await isReady(tenantId, "openrouter");
   return {
     items: rows.filter((row) => !blocked.has(row.organizationId)).map((row) => publicItem(row, end)),
     total,
+    review: reviewRows.filter((row) => !blocked.has(row.organizationId)).map((row) => publicItem(row, end)),
+    reviewTotal: Math.max(0, reviewTotal - reviewRows.filter((row) => blocked.has(row.organizationId)).length),
     approved,
     followUps,
     queued,
@@ -316,6 +333,7 @@ function publicItem(row: OutreachRow, endOfToday: Date) {
     followUpStep: row.followUpStep,
     nextFollowUpAt: row.nextFollowUpAt,
     followUpDue: row.status === "sent" && Boolean(row.nextFollowUpAt && row.nextFollowUpAt <= endOfToday),
+    actionDue: LIVE.includes(row.status) && Boolean(row.nextFollowUpAt && row.nextFollowUpAt <= endOfToday),
     repliedAt: row.repliedAt,
     channel: row.channel,
     error: row.error,
@@ -412,6 +430,7 @@ export async function getItem(tenantId: string, id: string) {
     followUpStep: row.followUpStep,
     nextFollowUpAt: row.nextFollowUpAt,
     followUpDue,
+    actionDue: LIVE.includes(row.status) && Boolean(row.nextFollowUpAt && row.nextFollowUpAt <= end),
     error: row.error,
     pitch: draft,
     followUp,
@@ -519,15 +538,18 @@ export async function followUpDone(tenantId: string, actorId: string, id: string
 
 export const STATUS_FLOW: Record<string, { label: string; stage: string | null; from: string[] }> = {
   replied: { label: "Ответил", stage: "replied", from: ["sent", "sleeping", "lost"] },
-  call: { label: "Созвон", stage: "meeting", from: ["replied", "estimate"] },
-  estimate: { label: "Смета", stage: "proposal", from: ["replied", "call"] },
-  won: { label: "Сделка", stage: "won", from: ["call", "estimate", "replied"] },
-  lost: { label: "Отказ", stage: "lost", from: ["sent", "replied", "call", "estimate", "sleeping"] },
+  // §7 и §12.6: демо — после ответа «интересно», до созвона.
+  demo: { label: "Демо показано", stage: "demo_ready", from: ["replied"] },
+  call: { label: "Созвон", stage: "meeting", from: ["replied", "demo", "estimate"] },
+  // §3: «не отправлять смет без созвона» — смета только после созвона.
+  estimate: { label: "Смета", stage: "proposal", from: ["call"] },
+  won: { label: "Сделка", stage: "won", from: ["call", "estimate"] },
+  lost: { label: "Отказ", stage: "lost", from: ["sent", "replied", "demo", "call", "estimate", "sleeping"] },
   sleeping: { label: "Спящий", stage: null, from: ["sent"] },
-  optout: { label: "Просит не писать", stage: "do_not_contact", from: ["sent", "replied", "call", "estimate", "sleeping", "lost", "approved", "new", "snoozed"] },
+  optout: { label: "Просит не писать", stage: "do_not_contact", from: ["sent", "replied", "demo", "call", "estimate", "sleeping", "lost", "approved", "new", "snoozed"] },
 };
 
-export const statusSchema = z.object({ status: z.enum(["replied", "call", "estimate", "won", "lost", "sleeping", "optout"]), note: z.string().trim().max(500).optional() });
+export const statusSchema = z.object({ status: z.enum(["replied", "demo", "call", "estimate", "won", "lost", "sleeping", "optout"]), note: z.string().trim().max(500).optional() });
 
 export async function setStatus(tenantId: string, actorId: string, id: string, input: z.infer<typeof statusSchema>) {
   const row = await owned(tenantId, id);
@@ -553,8 +575,8 @@ export async function setStatus(tenantId: string, actorId: string, id: string, i
     where: { id, tenantId, status: row.status },
     data: {
       status: nextStatus,
-      nextFollowUpAt: null,
-      repliedAt: ["replied", "call", "estimate", "won"].includes(input.status) ? (row.repliedAt ?? new Date()) : row.repliedAt,
+      nextFollowUpAt: NEXT_STEP_HOURS[nextStatus] ? new Date(Date.now() + NEXT_STEP_HOURS[nextStatus] * 60 * 60 * 1000) : null,
+      repliedAt: ["replied", "demo", "call", "estimate", "won"].includes(input.status) ? (row.repliedAt ?? new Date()) : row.repliedAt,
       rejectReason: input.status === "optout" ? "Просит не писать" : row.rejectReason,
     },
   });
@@ -570,8 +592,8 @@ export async function setStatus(tenantId: string, actorId: string, id: string, i
 export async function dialogs(tenantId: string) {
   const { end } = await bounds(tenantId);
   const [due, active, waiting, approved, sleeping, failed] = await Promise.all([
-    prisma.outreach.findMany({ where: { tenantId, status: "sent", nextFollowUpAt: { lte: end }, organization: contactableOrg }, include: listInclude, orderBy: { nextFollowUpAt: "asc" }, take: 50 }),
-    prisma.outreach.findMany({ where: { tenantId, status: { in: ["replied", "call", "estimate"] } }, include: listInclude, orderBy: { updatedAt: "desc" }, take: 50 }),
+    prisma.outreach.findMany({ where: { tenantId, status: { in: ["sent", ...LIVE] }, nextFollowUpAt: { lte: end }, organization: contactableOrg }, include: listInclude, orderBy: { nextFollowUpAt: "asc" }, take: 50 }),
+    prisma.outreach.findMany({ where: { tenantId, status: { in: LIVE } }, include: listInclude, orderBy: [{ nextFollowUpAt: "asc" }, { updatedAt: "desc" }], take: 50 }),
     prisma.outreach.findMany({ where: { tenantId, status: "sent", OR: [{ nextFollowUpAt: { gt: end } }, { nextFollowUpAt: null }] }, include: listInclude, orderBy: { sentAt: "desc" }, take: 50 }),
     prisma.outreach.findMany({ where: { tenantId, status: "approved", organization: contactableOrg }, include: listInclude, orderBy: [{ priority: "asc" }, { score: "desc" }], take: 50 }),
     prisma.outreach.findMany({ where: { tenantId, status: { in: ["sleeping", "won", "lost"] } }, include: listInclude, orderBy: { updatedAt: "desc" }, take: 50 }),
@@ -588,12 +610,14 @@ export async function retryFailed(tenantId: string, actorId: string) {
 
 export async function stats(tenantId: string, days = 7) {
   const since = new Date(Date.now() - days * DAY);
+  // Воронка по истории действий, а не по текущему статусу: «созвон → отказ» всё равно остаётся созвоном (§9).
+  const reached = async (type: string) => (await prisma.activity.findMany({ where: { tenantId, type, createdAt: { gte: since } }, distinct: ["organizationId"], select: { organizationId: true } })).length;
   const [touches, replies, calls, estimates, won, totalTouches, qualified, passed, bySegment, projects] = await Promise.all([
-    prisma.outreach.count({ where: { tenantId, sentAt: { gte: since } } }),
-    prisma.outreach.count({ where: { tenantId, sentAt: { gte: since }, repliedAt: { not: null } } }),
-    prisma.outreach.count({ where: { tenantId, sentAt: { gte: since }, status: { in: ["call", "estimate", "won"] } } }),
-    prisma.outreach.count({ where: { tenantId, sentAt: { gte: since }, status: { in: ["estimate", "won"] } } }),
-    prisma.outreach.count({ where: { tenantId, sentAt: { gte: since }, status: "won" } }),
+    prisma.activity.count({ where: { tenantId, type: "outreach.sent", createdAt: { gte: since } } }),
+    reached("outreach.replied"),
+    reached("outreach.call"),
+    reached("outreach.estimate"),
+    reached("outreach.won"),
     prisma.outreach.count({ where: { tenantId, sentAt: { not: null } } }),
     prisma.outreach.count({ where: { tenantId, qualifiedAt: { gte: since } } }),
     prisma.outreach.count({ where: { tenantId, qualifiedAt: { gte: since }, score: { gte: QUALIFY_THRESHOLD }, cardStatus: "ready" } }),
@@ -624,4 +648,75 @@ export async function stats(tenantId: string, days = 7) {
     bySegment: bySegment.map((item) => ({ segment: item.segment, label: segmentInfo(item.segment)?.label ?? "Без сегмента", count: item._count._all })),
     advice,
   };
+}
+
+export const factSchema = z.object({ kind: z.enum(["money", "chaos"]), text: z.string().trim().min(3).max(200) });
+
+/** Человек проверил карточку и подтвердил факт (§3, шаг 5). Балл пересчитывается, карточка может стать A/B. */
+export async function addFact(tenantId: string, actorId: string, id: string, input: z.infer<typeof factSchema>) {
+  const row = await owned(tenantId, id);
+  if (!OPEN.includes(row.status)) throw new ApiError(409, "По карточке уже идёт диалог.", "already_sent");
+  const card = row.card as unknown as ObservationCard | null;
+  if (!card) throw new ApiError(409, "Карточка ещё не собрана — дождитесь скоринга.", "card_missing");
+  const next = addManualFact(card, input.kind, input.text);
+  const scored = strategyScore(next, flagsFromFactors(row.factors as unknown as StrategyFactor[] | null));
+  const updated = await prisma.outreach.updateMany({
+    where: { id, tenantId, status: { in: OPEN } },
+    data: {
+      card: { ...next, promptVersion: QUALIFY_PROMPT_VERSION } as unknown as Prisma.InputJsonValue,
+      factors: scored.factors as unknown as Prisma.InputJsonValue,
+      score: scored.score,
+      priority: scored.priority,
+      cardStatus: scored.ready ? "ready" : "no_fact",
+    },
+  });
+  if (!updated.count) throw new ApiError(409, "Карточку уже изменили на другом устройстве.", "conflict");
+  await activity({ tenantId, organizationId: row.organizationId, actorId, type: "outreach.fact", message: `Подтверждён факт (${input.kind === "money" ? "деньги" : "хаос"}): ${input.text}` });
+  await queueSheet(tenantId, "outreach", id);
+  return { ok: true, score: scored.score, priority: scored.priority, ready: scored.ready };
+}
+
+/** Следующая карточка для работы: сначала взятые в работу, потом новые A/B. Чтобы после «Отправил» не возвращаться в список. */
+export async function nextItem(tenantId: string, excludeId?: string | null) {
+  const now = new Date();
+  const base = { tenantId, organization: contactableOrg, ...(excludeId ? { id: { not: excludeId } } : {}) } satisfies Prisma.OutreachWhereInput;
+  const pick = async (where: Prisma.OutreachWhereInput) => {
+    const rows = await prisma.outreach.findMany({ where, orderBy: [{ priority: "asc" }, { score: "desc" }], take: 10, select: { id: true, organizationId: true, organization: { select: { contacts: { select: { value: true } } } } } });
+    const blocked = await suppressedOrgIds(tenantId, rows);
+    return rows.find((row) => !blocked.has(row.organizationId)) ?? null;
+  };
+  const approved = await pick({ ...base, status: "approved" });
+  if (approved) return { id: approved.id, kind: "write" as const };
+  const fresh = await pick({ ...base, cardStatus: "ready", priority: { in: ["A", "B"] }, OR: [{ status: "new" }, { status: "snoozed", snoozeUntil: { lte: now } }] });
+  return fresh ? { id: fresh.id, kind: "review" as const } : null;
+}
+
+/** Последние поиски с воронкой: сколько пришло, сколько неполных, без фактов, готовых к ленте. */
+export async function searches(tenantId: string) {
+  const tasks = await prisma.parserTask.findMany({ where: { tenantId }, orderBy: { createdAt: "desc" }, take: 8 });
+  return Promise.all(tasks.map(async (task) => {
+    const summary = (task.resultSummary ?? {}) as { orgIds?: string[] };
+    const ids = Array.isArray(summary.orgIds) ? summary.orgIds : [];
+    const rows = ids.length ? await prisma.outreach.groupBy({ by: ["cardStatus", "priority"], where: { tenantId, organizationId: { in: ids } }, _count: { _all: true } }) : [];
+    const count = (fn: (row: (typeof rows)[number]) => boolean) => rows.filter(fn).reduce((sum, row) => sum + row._count._all, 0);
+    const input = (task.input ?? {}) as { city?: string; category?: string; maxResults?: number };
+    return {
+      id: task.id,
+      city: input.city ?? "",
+      category: input.category ?? "",
+      requested: input.maxResults ?? null,
+      status: task.status,
+      syncedAt: task.syncedAt,
+      createdAt: task.createdAt,
+      error: task.error,
+      received: task.organizationCount,
+      funnel: ids.length ? {
+        incomplete: count((row) => row.cardStatus === "incomplete"),
+        noFact: count((row) => row.cardStatus === "no_fact"),
+        review: count((row) => row.cardStatus === "no_fact" && row.priority === "C"),
+        ready: count((row) => row.cardStatus === "ready" && ["A", "B"].includes(row.priority)),
+        queued: count((row) => row.cardStatus === "queued"),
+      } : null,
+    };
+  }));
 }

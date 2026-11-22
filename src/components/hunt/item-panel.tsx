@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Clock, Copy, ExternalLink, FolderKanban, Mail, MessageCircle, Phone, Send, Sparkles, X } from "lucide-react";
+import { ArrowRight, Check, Clock, Copy, PenLine, ExternalLink, FolderKanban, Mail, MessageCircle, Phone, Send, Sparkles, X } from "lucide-react";
 import { ApiClientError } from "@/lib/client";
-import { bannedIn } from "@/lib/domain/pitch";
+import { bannedIn, replyTemplates } from "@/lib/domain/pitch";
+import { scenarioOf } from "@/lib/domain/scenarios";
 import { useHunt } from "./shell";
 import { post, useLive } from "./data";
 import { Button, Chip, Notice, PriorityBadge, Sheet, Skeleton, cx, errorText, textareaClass, useToast } from "./ui";
@@ -25,6 +26,8 @@ type Item = {
   followUpStep: number;
   nextFollowUpAt: string | null;
   followUpDue: boolean;
+  actionDue?: boolean;
+  segment: string | null;
   error: string | null;
   pitch: string;
   followUp: string | null;
@@ -44,14 +47,18 @@ const CHANNELS = [
   { key: "other", label: "Другое" },
 ];
 const KIND_TO_CHANNEL: Record<string, string> = { telegram: "telegram", whatsapp: "whatsapp", vk: "vk", email: "email", phone: "phone", instagram: "instagram", link: "other" };
+/** Шаги после первого сообщения. Смета — только после созвона (§3), демо — между ответом и созвоном (§7). */
 const NEXT: Record<string, string[]> = {
   sent: ["replied", "lost", "sleeping", "optout"],
   sleeping: ["replied", "lost", "optout"],
-  replied: ["call", "estimate", "won", "lost", "optout"],
+  replied: ["demo", "call", "lost", "optout"],
+  demo: ["call", "lost", "optout"],
   call: ["estimate", "won", "lost"],
   estimate: ["call", "won", "lost"],
   lost: ["replied"],
 };
+const MONEY_CHIPS = ["2+ филиала", "Дорогой чек", "Реклама в Директе или Авито", "Много отзывов на других площадках", "Большая команда / много мастеров"];
+const CHAOS_CHIPS = ["Заявки только по телефону", "Соцсеть вместо сайта", "Нет онлайн-записи", "Меню или прайс картинкой", "Заказы в мессенджере вручную"];
 const REASONS = ["Нет денег", "Нет хаоса", "Уже есть сайт", "Не та ниша", "Факт неверный", "Нет контакта"];
 
 function LinkIcon({ kind }: { kind: string }) {
@@ -150,9 +157,34 @@ export function ItemPanel({ id }: { id: string | null }) {
     const ok = await run(() => post(`/api/hunt/${data.id}/decide`, { action, reason, days: action === "snooze" ? 3 : undefined }));
     if (ok == null) return;
     refresh();
-    const label = action === "approve" ? "Взято в работу — теперь напишите" : action === "reject" ? "Отклонено" : "Отложено на 3 дня";
+    const label = action === "approve" ? "Взято в работу" : action === "reject" ? "Отклонено" : "Отложено на 3 дня";
     toast({ text: label, action: { label: "Отменить", run: () => { void post(`/api/hunt/${data.id}/decide`, { action: "undo" }).then(refresh); } } });
-    if (action !== "approve") close();
+    if (action !== "approve") await goNext();
+  }
+
+  /** После действия — сразу следующая карточка, без возврата в список. */
+  async function goNext(doneText?: string) {
+    if (!data) return close();
+    try {
+      const next = await post<{ id: string; kind: string } | null>(`/api/hunt/next?after=${encodeURIComponent(data.id)}`, undefined, "GET");
+      if (next?.id) {
+        if (doneText) toast({ text: `${doneText} · дальше следующая` });
+        open("item", next.id, true);
+        return;
+      }
+    } catch { /* нет следующей — просто закрываем */ }
+    if (doneText) toast({ text: `${doneText} · карточки на сегодня закончились` });
+    close();
+  }
+
+  const [factText, setFactText] = useState("");
+  async function addFact(kind: "money" | "chaos", value: string) {
+    if (!data || value.trim().length < 3) return;
+    const result = await run(() => post<{ ready: boolean; priority: string; score: number }>(`/api/hunt/${data.id}/fact`, { kind, text: value.trim() }));
+    if (!result) return;
+    setFactText("");
+    refresh();
+    toast({ text: result.ready ? `Карточка готова: ${result.priority} ${result.score} — можно писать` : `Факт добавлен · ${result.priority} ${result.score}` });
   }
 
   async function copy() {
@@ -191,8 +223,7 @@ export function ItemPanel({ id }: { id: string | null }) {
       }
       writeDraft(draftKey, null);
       refresh();
-      toast({ text: "Отмечено. Напомню через 3 дня" });
-      close();
+      await goNext("Отмечено, напомню через 3 дня");
     } catch (reason) {
       setError(errorText(reason));
     } finally {
@@ -205,8 +236,7 @@ export function ItemPanel({ id }: { id: string | null }) {
     const result = await run(() => post<{ next: string | null }>(`/api/hunt/${data.id}/followup`, { channel }));
     if (!result) return;
     refresh();
-    toast({ text: result.next ? `Отмечено. Следующее напоминание ${dayLabel(result.next)}` : "Три напоминания без ответа — карточка в «спящих»" });
-    close();
+    await goNext(result.next ? `Напоминание отмечено, следующее ${dayLabel(result.next)}` : "Три напоминания без ответа — в «спящих»");
   }
 
   async function setStatus(next: string) {
@@ -237,7 +267,7 @@ export function ItemPanel({ id }: { id: string | null }) {
       <div className="grid grid-cols-[48px_48px_minmax(0,1fr)] gap-2 sm:grid-cols-[56px_56px_minmax(0,1fr)]">
         <Button variant="danger" size="lg" className="px-0" aria-label="Отклонить" onClick={() => setRejecting(true)}><X className="h-6 w-6" /></Button>
         <Button variant="glass" size="lg" className="px-0" aria-label="Отложить на 3 дня" pending={busy} onClick={() => decide("snooze")}><Clock className="h-5 w-5" /></Button>
-        <Button variant="accent" size="lg" className="px-3" pending={busy} onClick={() => decide("approve")}><Check className="h-5 w-5 max-[359px]:hidden" /> Взять в работу</Button>
+        <Button variant="accent" size="lg" className="px-3" pending={busy} onClick={() => decide("approve")}><PenLine className="h-5 w-5 max-[359px]:hidden" /> Написать</Button>
       </div>
     ) : null
   ) : null;
@@ -331,6 +361,38 @@ export function ItemPanel({ id }: { id: string | null }) {
             <Notice>Отправлено {dayLabel(data.sentAt)}. {data.nextFollowUpAt ? `Напоминание ${data.followUpStep + 1} из 3 — ${dayLabel(data.nextFollowUpAt)}.` : ""}</Notice>
           ) : null}
 
+          {data.cardStatus === "no_fact" && firstContact && data.card ? (
+            <section className="tint-yellow space-y-3 rounded-2xl border p-4">
+              <div>
+                <h3 className="text-lg font-semibold">Проверьте карточку</h3>
+                <p className="mt-1 text-sm text-[var(--h-muted)]">Парсер не нашёл {data.card.money.length ? "хаоса" : "признака денег"}. Откройте источник и, если видите факт, отметьте его — карточка пересчитается.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(data.card.money.length ? CHAOS_CHIPS : MONEY_CHIPS).map((chip) => <Chip key={chip} disabled={busy} onClick={() => addFact(data.card!.money.length ? "chaos" : "money", chip)}>{chip}</Chip>)}
+              </div>
+              <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); void addFact(data.card!.money.length ? "chaos" : "money", factText); }}>
+                <input value={factText} onChange={(event) => setFactText(event.target.value)} placeholder={data.card.money.length ? "Свой факт: «заказы только в директ»" : "Свой факт: «3 точки в городе»"} className="h-11 min-w-0 flex-1 rounded-full border border-[var(--h-line)] bg-white/[0.04] px-4 text-[15px] outline-none focus:border-[var(--h-accent)]" />
+                <Button size="md" variant="light" disabled={busy || factText.trim().length < 3} aria-label="Добавить факт"><ArrowRight className="h-4 w-4" /></Button>
+              </form>
+            </section>
+          ) : null}
+
+          {data.actionDue ? <Notice tone="warn">Срок следующего шага по диалогу — сегодня. Ответьте клиенту или отметьте, что дальше.</Notice> : null}
+
+          {["replied", "demo", "call"].includes(data.status) ? (
+            <section>
+              <h3 className="mb-2 text-lg font-semibold">Ответить клиенту</h3>
+              <div className="space-y-2">
+                {replyTemplates(scenarioOf(data.segment)).map((item) => (
+                  <button key={item.key} onClick={() => navigator.clipboard.writeText(item.text).then(() => toast({ text: "Текст скопирован — вставьте в чат" })).catch(() => toast({ text: "Скопируйте вручную", tone: "error" }))} className="glass block w-full rounded-2xl p-3.5 text-left transition hover:bg-white/[0.07]">
+                    <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-[var(--h-accent)]">{item.label}<Copy className="h-3.5 w-3.5" /></div>
+                    <p className="mt-1 text-[15px] leading-[21px] text-[var(--h-muted)]">{item.text}</p>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
           {NEXT[data.status] ? (
             <section>
               <h3 className="mb-2 text-lg font-semibold">Что дальше</h3>
@@ -344,7 +406,7 @@ export function ItemPanel({ id }: { id: string | null }) {
                   {data.links.filter((link) => link.kind === "phone").map((link) => <a key={link.href} href={link.href} className="glass inline-flex h-11 items-center gap-2 rounded-full px-4 text-[15px]"><Phone className="h-4 w-4 text-[var(--h-accent)]" /> {link.label}</a>)}
                 </div>
               ) : null}
-              {["replied", "call"].includes(data.status) ? <p className="mt-2 text-xs text-[var(--h-faint)]">«Смета» или «Сделка» сами создают карточку проекта с чек-листом и JSON.</p> : null}
+              {["replied", "demo"].includes(data.status) ? <p className="mt-2 text-xs text-[var(--h-faint)]">Смета — после созвона, как в стратегии. «Смета» и «Сделка» сами создают проект с чек-листом и JSON.</p> : null}
             </section>
           ) : null}
         </div>
