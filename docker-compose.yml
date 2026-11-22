@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: leadflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: leadflow
+    volumes:
+      - leadflow_pg:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  app:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://leadflow:${POSTGRES_PASSWORD}@postgres:5432/leadflow
+      REDIS_URL: redis://redis:6379
+      RUN_MIGRATIONS: "1"
+    ports:
+      - "127.0.0.1:3100:3000"
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - leadflow_media:/app/data/offers
+    restart: unless-stopped
+
+  worker:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://leadflow:${POSTGRES_PASSWORD}@postgres:5432/leadflow
+      REDIS_URL: redis://redis:6379
+      RUN_MIGRATIONS: "0"
+    command: ["npx", "tsx", "src/worker.ts"]
+    volumes:
+      - ./scripts/server-only-stub.js:/app/node_modules/server-only/index.js:ro
+      - leadflow_media:/app/data/offers
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
+volumes:
+  leadflow_pg:
+  leadflow_media:

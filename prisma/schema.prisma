@@ -1,0 +1,852 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MANAGER
+  ANALYST
+  OPERATOR
+  VIEWER
+}
+
+model Tenant {
+  id           String       @id @default(cuid())
+  name         String
+  slug         String       @unique
+  settings     Json
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  memberships  Membership[]
+  invitations  Invitation[]
+  organizations Organization[]
+  parserTasks  ParserTask[]
+  templates    SearchTemplate[]
+  syncRuns     SyncRun[]
+  enrichments  EnrichmentRun[]
+  analyses     AnalysisReport[]
+  scores       LeadScore[]
+  sites        SiteProject[]
+  audits       SiteAudit[]
+  stages       PipelineStage[]
+  leads        Lead[]
+  deals        Deal[]
+  tasks        CrmTask[]
+  activities   Activity[]
+  notes        OrganizationNote[]
+  conversations Conversation[]
+  messages     Message[]
+  messageTemplates MessageTemplate[]
+  campaigns    Campaign[]
+  consents     ConsentRecord[]
+  suppressions SuppressionEntry[]
+  automations  AutomationRule[]
+  automationRuns AutomationRun[]
+  integrations Integration[]
+  usage        UsageRecord[]
+  costs        CostRecord[]
+  notifications Notification[]
+  auditLogs    AuditLog[]
+  jobs         Job[]
+  files        FileAsset[]
+  webhooks     WebhookEvent[]
+  agentThreads AgentThread[]
+  optOuts      OptOut[]
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime     @default(now())
+  memberships  Membership[]
+  sessions     Session[]
+}
+
+model Session {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+}
+
+model Membership {
+  id        String   @id @default(cuid())
+  tenantId  String
+  userId    String
+  role      Role
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, userId])
+  @@index([userId])
+}
+
+model Invitation {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email      String
+  role       Role
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([tenantId, email])
+}
+
+model Organization {
+  id                 String    @id @default(cuid())
+  tenantId           String
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  externalId         String?
+  source             String    @default("yandex")
+  isDemo             Boolean   @default(false)
+  name               String
+  city               String?
+  region             String?
+  category           String?
+  categories         String[]  @default([])
+  address            String?
+  website            String?
+  websiteStatus      String    @default("UNCERTAIN")
+  websiteCheckedAt   DateTime?
+  websiteCheckNote   String?
+  rating             Float?
+  reviewCount        Int?
+  photoCount         Int?
+  sourceUrl          String?
+  lat                Float?
+  lon                Float?
+  services           String[]  @default([])
+  features           String[]  @default([])
+  hours              Json?
+  description        String?   @db.Text
+  legalName          String?
+  raw                Json?
+  processingStatus   String    @default("new")
+  assigneeId         String?
+  leadScore          Int?
+  firstSeenAt        DateTime?
+  parserUpdatedAt    DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  contacts           OrganizationContact[]
+  notes              OrganizationNote[]
+  tags               OrganizationTag[]
+  analyses           AnalysisReport[]
+  scores             LeadScore[]
+  sites              SiteProject[]
+  lead               Lead?
+  deals              Deal[]
+  activities         Activity[]
+  conversations      Conversation[]
+  enrichments        EnrichmentRun[]
+  optOut             OptOut?
+
+  @@unique([tenantId, source, externalId])
+  @@index([tenantId, city])
+  @@index([tenantId, category])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, isDemo])
+  @@index([tenantId, name])
+}
+
+model OrganizationContact {
+  id               String       @id @default(cuid())
+  tenantId         String
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  type             String
+  value            String
+  label            String?
+  source           String       @default("parser")
+  permissionStatus String       @default("unknown")
+  createdAt        DateTime     @default(now())
+
+  @@unique([organizationId, type, value])
+  @@index([tenantId, type])
+}
+
+model OrganizationNote {
+  id             String       @id @default(cuid())
+  tenantId       String
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  authorId       String
+  body           String       @db.Text
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
+}
+
+model OrganizationTag {
+  id             String       @id @default(cuid())
+  tenantId       String
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  tag            String
+
+  @@unique([organizationId, tag])
+}
+
+model ParserTask {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  externalId        String?
+  type              String
+  input             Json
+  status            String    @default("queued")
+  progress          Int       @default(0)
+  error             String?   @db.Text
+  resultSummary     Json?
+  organizationCount Int?
+  idempotencyKey    String?
+  createdById       String?
+  syncedAt          DateTime?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  events            ParserTaskEvent[]
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, status, createdAt])
+  @@index([externalId])
+}
+
+model ParserTaskEvent {
+  id     String     @id @default(cuid())
+  taskId String
+  task   ParserTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  seq    Int?
+  type   String
+  message String?   @db.Text
+  data   Json?
+  at     DateTime   @default(now())
+
+  @@index([taskId, at])
+}
+
+model SearchTemplate {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  params      Json
+  createdById String
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model SyncRun {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  status     String
+  filters    Json?
+  imported   Int       @default(0)
+  updated    Int       @default(0)
+  error      String?   @db.Text
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@index([tenantId, startedAt])
+}
+
+model EnrichmentRun {
+  id             String       @id @default(cuid())
+  tenantId       String
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  type           String
+  status         String
+  result         Json?
+  error          String?      @db.Text
+  createdAt      DateTime     @default(now())
+  finishedAt     DateTime?
+
+  @@index([organizationId, createdAt])
+}
+
+model AnalysisReport {
+  id             String       @id @default(cuid())
+  tenantId       String
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  status         String
+  source         String       @default("openrouter")
+  model          String?
+  promptVersion  String?
+  inputTokens    Int?
+  outputTokens   Int?
+  costUsd        Float?
+  costUnknown    Boolean      @default(false)
+  report         Json?
+  confidence     Float?
+  error          String?      @db.Text
+  createdAt      DateTime     @default(now())
+  finishedAt     DateTime?
+
+  @@index([tenantId, status, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+model LeadScore {
+  id             String       @id @default(cuid())
+  tenantId       String
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  score          Int
+  method         String
+  factors        Json
+  weights        Json
+  explanation    String?      @db.Text
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
+}
+
+model SiteProject {
+  id               String    @id @default(cuid())
+  tenantId         String
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  studioProjectId  String?
+  name             String
+  siteType         String
+  language         String    @default("ru")
+  style            String?
+  pages            Json?
+  wishes           String?   @db.Text
+  brief            String?   @db.Text
+  status           String    @default("draft")
+  previewUrl       String?
+  previewFetchedAt DateTime?
+  publicUrl        String?
+  qaScore          Int?
+  qaSummary        String?   @db.Text
+  criticalCount    Int       @default(0)
+  versionCount     Int       @default(0)
+  assigneeId       String?
+  costUsd          Float?
+  costUnknown      Boolean   @default(true)
+  isDemo           Boolean   @default(true)
+  visibility       String    @default("unpublished")
+  error            String?   @db.Text
+  createdById      String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  runs             SiteGenerationRun[]
+  versions         SiteVersion[]
+  audits           SiteAudit[]
+  approvals        SiteApproval[]
+
+  @@index([tenantId, status, createdAt])
+  @@index([organizationId])
+  @@index([studioProjectId])
+}
+
+model SiteGenerationRun {
+  id             String      @id @default(cuid())
+  tenantId       String
+  siteProjectId  String
+  siteProject    SiteProject @relation(fields: [siteProjectId], references: [id], onDelete: Cascade)
+  studioTaskId   String?
+  status         String
+  state          String?
+  mode           String      @default("build")
+  prompt         String?     @db.Text
+  replyText      String?     @db.Text
+  replyMeta      Json?
+  error          String?     @db.Text
+  idempotencyKey String?
+  createdAt      DateTime    @default(now())
+  finishedAt     DateTime?
+
+  @@unique([idempotencyKey])
+  @@index([siteProjectId, createdAt])
+}
+
+model SiteVersion {
+  id            String      @id @default(cuid())
+  siteProjectId String
+  siteProject   SiteProject @relation(fields: [siteProjectId], references: [id], onDelete: Cascade)
+  sha           String?
+  message       String?
+  createdAt     DateTime    @default(now())
+}
+
+model SiteAudit {
+  id             String      @id @default(cuid())
+  tenantId       String
+  tenant         Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  siteProjectId  String
+  siteProject    SiteProject @relation(fields: [siteProjectId], references: [id], onDelete: Cascade)
+  source         String
+  externalTaskId String?
+  status         String
+  score          Int?
+  criticalCount  Int         @default(0)
+  warningCount   Int         @default(0)
+  result         Json?
+  error          String?     @db.Text
+  createdAt      DateTime    @default(now())
+  finishedAt     DateTime?
+
+  @@index([siteProjectId, createdAt])
+}
+
+model SiteApproval {
+  id            String      @id @default(cuid())
+  siteProjectId String
+  siteProject   SiteProject @relation(fields: [siteProjectId], references: [id], onDelete: Cascade)
+  userId        String
+  decision      String
+  comment       String?     @db.Text
+  createdAt     DateTime    @default(now())
+}
+
+model PipelineStage {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  key        String
+  name       String
+  position   Int
+  isTerminal Boolean  @default(false)
+  leads      Lead[]
+  deals      Deal[]
+
+  @@unique([tenantId, key])
+  @@index([tenantId, position])
+}
+
+model Lead {
+  id             String         @id @default(cuid())
+  tenantId       String
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organizationId String         @unique
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  stageId        String
+  stage          PipelineStage  @relation(fields: [stageId], references: [id])
+  assigneeId     String?
+  value          Decimal?       @db.Decimal(12, 2)
+  nextActionAt   DateTime?
+  lostReason     String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  deals          Deal[]
+  tasks          CrmTask[]
+  activities     Activity[]
+
+  @@index([tenantId, stageId])
+  @@index([tenantId, assigneeId])
+}
+
+model Deal {
+  id             String        @id @default(cuid())
+  tenantId       String
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId         String?
+  lead           Lead?         @relation(fields: [leadId], references: [id])
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  stageId        String
+  stage          PipelineStage @relation(fields: [stageId], references: [id])
+  title          String
+  value          Decimal?      @db.Decimal(12, 2)
+  status         String        @default("open")
+  assigneeId     String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([tenantId, status])
+}
+
+model CrmTask {
+  id             String    @id @default(cuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title          String
+  description    String?   @db.Text
+  dueAt          DateTime?
+  status         String    @default("open")
+  assigneeId     String?
+  organizationId String?
+  leadId         String?
+  lead           Lead?     @relation(fields: [leadId], references: [id])
+  createdById    String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([tenantId, assigneeId, status])
+}
+
+model Activity {
+  id             String        @id @default(cuid())
+  tenantId       String
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  leadId         String?
+  lead           Lead?         @relation(fields: [leadId], references: [id])
+  type           String
+  message        String        @db.Text
+  meta           Json?
+  actorId        String?
+  createdAt      DateTime      @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+model Conversation {
+  id             String        @id @default(cuid())
+  tenantId       String
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  channel        String
+  subject        String?
+  status         String        @default("open")
+  assigneeId     String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  messages       Message[]
+
+  @@index([tenantId, updatedAt])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  tenantId       String
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  direction      String
+  channel        String
+  body           String       @db.Text
+  status         String
+  error          String?      @db.Text
+  lawfulBasis    String?
+  basisNote      String?      @db.Text
+  approvedById   String?
+  approvedAt     DateTime?
+  sentAt         DateTime?
+  externalId     String?
+  createdAt      DateTime     @default(now())
+
+  @@index([tenantId, status, createdAt])
+  @@index([conversationId, createdAt])
+}
+
+model MessageTemplate {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  channel   String
+  body      String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+model Campaign {
+  id                   String   @id @default(cuid())
+  tenantId             String
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name                 String
+  channel              String
+  templateId           String?
+  filters              Json
+  status               String   @default("draft")
+  legalBasisConfirmed  Boolean  @default(false)
+  lawfulBasis          String?
+  basisNote            String?  @db.Text
+  audienceCount        Int      @default(0)
+  eligibleCount        Int      @default(0)
+  excludedCount        Int      @default(0)
+  sentCount            Int      @default(0)
+  errorCount           Int      @default(0)
+  replyCount           Int      @default(0)
+  createdById          String
+  approvedById         String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  recipients           CampaignRecipient[]
+
+  @@index([tenantId, status])
+}
+
+model CampaignRecipient {
+  id               String   @id @default(cuid())
+  campaignId       String
+  campaign         Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  organizationId   String
+  contactValue     String?
+  status           String
+  reason           String?
+  personalizedBody String?  @db.Text
+  messageId        String?
+  updatedAt        DateTime @updatedAt
+
+  @@unique([campaignId, organizationId])
+}
+
+model ConsentRecord {
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organizationId String?
+  contactValue   String?
+  basis          String
+  note           String?  @db.Text
+  recordedById   String
+  createdAt      DateTime @default(now())
+
+  @@index([tenantId, organizationId])
+}
+
+model OptOut {
+  id             String       @id @default(cuid())
+  tenantId       String
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  messageId      String?
+  source         String       @default("link")
+  createdAt      DateTime     @default(now())
+
+  @@index([tenantId, createdAt])
+}
+
+model SuppressionEntry {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  channel   String   @default("*")
+  value     String
+  reason    String
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, channel, value])
+  @@index([tenantId, value])
+}
+
+model AutomationRule {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  description     String?  @db.Text
+  active          Boolean  @default(false)
+  trigger         String
+  conditions      Json
+  actions         Json
+  intervalMinutes Int?
+  nextRunAt       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  runs            AutomationRun[]
+
+  @@index([tenantId, active, trigger])
+}
+
+model AutomationRun {
+  id         String         @id @default(cuid())
+  ruleId     String
+  rule       AutomationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  tenantId   String
+  tenant     Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  status     String
+  dryRun     Boolean        @default(false)
+  input      Json?
+  output     Json?
+  error      String?        @db.Text
+  startedAt  DateTime       @default(now())
+  finishedAt DateTime?
+
+  @@index([ruleId, startedAt])
+}
+
+model Integration {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  provider      String
+  status        String    @default("not_configured")
+  config        Json
+  secretEnc     String?   @db.Text
+  lastCheckedAt DateTime?
+  lastError     String?   @db.Text
+  scopes        String[]  @default([])
+
+  @@unique([tenantId, provider])
+}
+
+model UsageRecord {
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  provider       String
+  operation      String
+  quantity       Int      @default(1)
+  organizationId String?
+  meta           Json?
+  createdAt      DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+}
+
+model CostRecord {
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  provider       String
+  operation      String
+  amountUsd      Float?
+  unknown        Boolean  @default(false)
+  organizationId String?
+  refType        String?
+  refId          String?
+  createdAt      DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, provider])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String?
+  title     String
+  body      String    @db.Text
+  href      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([tenantId, userId, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actorId    String?
+  action     String
+  entityType String?
+  entityId   String?
+  meta       Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+}
+
+model Job {
+  id              String    @id @default(cuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  type            String
+  payload         Json
+  status          String    @default("queued")
+  attempts        Int       @default(0)
+  maxAttempts     Int       @default(5)
+  runAt           DateTime  @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  error           String?   @db.Text
+  result          Json?
+  idempotencyKey  String?
+  cancelRequested Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([status, runAt])
+  @@index([tenantId, type, status])
+}
+
+model FileAsset {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  mime       String
+  size       Int
+  storageKey String
+  createdById String?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model WebhookEvent {
+  id         String    @id @default(cuid())
+  tenantId   String?
+  tenant     Tenant?   @relation(fields: [tenantId], references: [id])
+  provider   String
+  payload    Json
+  processed  Boolean   @default(false)
+  error      String?
+  createdAt  DateTime  @default(now())
+
+  @@index([provider, createdAt])
+}
+
+model WorkerHeartbeat {
+  id     String   @id
+  seenAt DateTime
+  info   String?
+}
+
+model AgentThread {
+  id        String         @id @default(cuid())
+  tenantId  String
+  tenant    Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String
+  title     String         @default("Новый диалог")
+  status    String         @default("idle")
+  error     String?        @db.Text
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  messages  AgentMessage[]
+
+  @@index([tenantId, updatedAt])
+}
+
+model AgentMessage {
+  id        String      @id @default(cuid())
+  tenantId  String
+  threadId  String
+  thread    AgentThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  role      String
+  content   String      @db.Text
+  toolName  String?
+  toolJson  Json?
+  createdAt DateTime    @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([threadId, createdAt])
+}
