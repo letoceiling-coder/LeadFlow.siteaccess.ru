@@ -1,8 +1,55 @@
 import { describe, expect, it } from "vitest";
-import { buildCard, priorityOf, qualifyResultSchema, strategyScore, type QualifyFacts } from "../src/lib/domain/qualify";
+import { buildCard, isIncomplete, priorityOf, qualifyResultSchema, strategyScore, type QualifyFacts } from "../src/lib/domain/qualify";
 import { detectSegment } from "../src/lib/domain/segments";
 import { bannedIn, buildPitch, contactLinks, nextFollowUpAt } from "../src/lib/domain/pitch";
 import { mergeSettings } from "../src/lib/domain/settings";
+import { dayBounds } from "../src/lib/domain/time";
+import { SCENARIOS, checklistFrom, scenarioOf } from "../src/lib/domain/scenarios";
+import { SEGMENTS } from "../src/lib/domain/segments";
+
+describe("выдуманные факты не проходят", () => {
+  it("«нет сайта» при живом сайте и неверное число отзывов отбрасываются", () => {
+    const facts = { ...base, website: "https://sushi.example", websiteStatus: "WEBSITE_EXISTS" };
+    const ai = qualifyResultSchema.parse({
+      observation: "У вас нет сайта, заказы только по телефону",
+      money: { facts: [{ text: "312 отзывов", source: "reviewCount" }, { text: "146 отзывов на картах", source: "reviewCount" }, { text: "Работают в Краснодаре", source: "city" }] },
+      chaos: { facts: [{ text: "Нет своего сайта", source: "websiteStatus" }] },
+    });
+    const card = buildCard(facts, ai);
+    expect(card.money.map((item) => item.text)).toEqual(["146 отзывов на картах"]);
+    expect(card.chaos).toHaveLength(0);
+    expect(card.observation).toBeNull();
+    expect(strategyScore(card, ai).ready).toBe(false);
+  });
+});
+
+describe("реальные данные парсера", () => {
+  it("сайт на clients.site — это хаос, а карточка Unknown без контактов — неполная", () => {
+    const facts = { ...base, website: "https://batja-nakormit.clients.site/", websiteStatus: "WEBSITE_EXISTS", reviewCount: null };
+    const card = buildCard(facts, null);
+    expect(card.chaos[0].text).toContain("clients.site");
+    expect(isIncomplete({ ...base, name: "Unknown" })).toBe(true);
+    expect(isIncomplete({ ...base, phones: [], website: null })).toBe(true);
+    expect(isIncomplete(base)).toBe(false);
+  });
+});
+
+describe("время", () => {
+  it("сутки считаются по Москве, а не по UTC", () => {
+    // 22:30 UTC 23 ноября = 01:30 МСК 24 ноября
+    const { start, end } = dayBounds("Europe/Moscow", new Date("2026-11-23T22:30:00Z"));
+    expect(start.toISOString()).toBe("2026-11-23T21:00:00.000Z");
+    expect(end.toISOString()).toBe("2026-11-24T20:59:59.999Z");
+  });
+});
+
+describe("сценарии", () => {
+  it("на каждый сегмент есть сценарий с этапами", () => {
+    for (const segment of SEGMENTS) expect(scenarioOf(segment.id)?.stages.length).toBeGreaterThan(3);
+    expect(SCENARIOS).toHaveLength(SEGMENTS.length);
+    expect(checklistFrom(scenarioOf("A1"))[0]).toEqual({ id: "s1", title: "Бриф и доступы", done: false });
+  });
+});
 
 const base: QualifyFacts = {
   name: "Суши Мастер",
@@ -91,7 +138,8 @@ describe("питч", () => {
     const card = buildCard(base, qualifyResultSchema.parse({ observation: "Заказы принимаете только по телефону, сайта нет.", avgCheckRub: 1500, lostPerMonth: 20 }));
     const text = buildPitch(card);
     expect(text).toContain("Увидел, что заказы принимаете только по телефону, сайта нет. Верно?");
-    expect(text.replace(/\s/g, " ")).toContain("30 000 ₽");
+    // Оценка потерь — догадка модели, в текст сообщения она не попадает.
+    expect(text).not.toContain("₽");
     expect(bannedIn(text)).toEqual([]);
   });
 
@@ -124,7 +172,9 @@ describe("питч", () => {
 
 describe("настройки охоты", () => {
   it("по умолчанию активный контур и лимит 25, мусор отбрасывается", () => {
-    expect(mergeSettings({}).hunt).toEqual({ activeSegments: ["A1", "A2", "B1"], dailyLimit: 25, autoQualify: true, autoQualifyMax: 60 });
+    expect(mergeSettings({}).hunt).toEqual({ activeSegments: ["A1", "A2", "B1"], dailyLimit: 25, autoQualify: true, autoQualifyMax: 60, timezone: "Europe/Moscow", projectWebhookUrl: "", sheetUrl: "" });
+    expect(mergeSettings({ hunt: { timezone: "Mars/Olympus", projectWebhookUrl: "http://10.0.0.1/x" } }).hunt.timezone).toBe("Europe/Moscow");
+    expect(mergeSettings({ hunt: { projectWebhookUrl: "http://example.com" } }).hunt.projectWebhookUrl).toBe("");
     expect(mergeSettings({ hunt: { activeSegments: ["A5", "ZZ"], dailyLimit: 9999 } }).hunt.activeSegments).toEqual(["A5"]);
     expect(mergeSettings({ hunt: { dailyLimit: 9999 } }).hunt.dailyLimit).toBe(25);
   });

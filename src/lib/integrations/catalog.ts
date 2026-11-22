@@ -47,6 +47,12 @@ export const INTEGRATION_CATALOG = [
     description: "S3-совместимое хранилище для вложений.",
     instructions: "Укажите endpoint, bucket, region, access key и secret. Файлы проекта пишутся в отдельную папку бакета, по умолчанию leadflow/.",
   },
+  {
+    id: "sheets",
+    name: "Google Таблицы",
+    description: "Лиды, касания и проекты сами попадают в вашу Google Таблицу через Apps Script.",
+    instructions: "Откройте таблицу → Расширения → Apps Script, вставьте код из LeadFlow (Охота → Настройки → «Скопировать код»), разверните как веб-приложение. Сюда — ссылку /exec и тот же токен.",
+  },
 ] as const;
 
 export type ProviderId = (typeof INTEGRATION_CATALOG)[number]["id"];

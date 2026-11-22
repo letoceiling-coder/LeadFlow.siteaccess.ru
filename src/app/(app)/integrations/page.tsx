@@ -17,6 +17,7 @@ const FIELDS: Record<string, { key: string; label: string; secret?: boolean; con
   telegram: [{ key: "botToken", label: "Токен бота", secret: true }, { key: "chatId", label: "Chat id команды", secret: true }],
   whatsapp: [{ key: "token", label: "Токен", secret: true }, { key: "phoneNumberId", label: "Phone Number ID", secret: true }, { key: "templateName", label: "Имя шаблона", config: true }],
   sms: [{ key: "provider", label: "Провайдер (smsru)", secret: true }, { key: "apiId", label: "api_id", secret: true }],
+  sheets: [{ key: "webhookUrl", label: "Ссылка веб-приложения (…/exec)", secret: true }, { key: "token", label: "Токен из Apps Script", secret: true }],
   storage: [{ key: "endpoint", label: "Endpoint", secret: true }, { key: "bucket", label: "Bucket", secret: true }, { key: "region", label: "Регион", secret: true }, { key: "prefix", label: "Папка", config: true }, { key: "accessKey", label: "Access key", secret: true }, { key: "secretKey", label: "Secret key", secret: true }],
 };
 

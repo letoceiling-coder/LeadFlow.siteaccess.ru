@@ -9,6 +9,8 @@ import { sendNextRecipient } from "../services/campaigns";
 import { runRule } from "../services/automations";
 import { runAgentTurn } from "../services/agent";
 import { markQualifyFailed, runQualify } from "../services/hunt";
+import { runSheetFull, runSheetPush } from "../services/sheets";
+import { deliverWebhook } from "../services/projects";
 
 type JobRow = { id: string; type: string; payload: unknown; cancelRequested: boolean };
 
@@ -50,10 +52,16 @@ export async function processJob(job: JobRow) {
       try {
         await runQualify(String(data.organizationId));
       } catch (error) {
-        if (!(error instanceof RetryableError)) await markQualifyFailed(String(data.organizationId), error instanceof Error ? error.message : "Ошибка квалификации");
+        // Карточка не должна навсегда остаться «в очереди»: помечаем сбой, если повторов больше не будет.
+        const current = await prisma.job.findUnique({ where: { id: job.id }, select: { attempts: true, maxAttempts: true } });
+        const lastTry = !current || current.attempts >= current.maxAttempts;
+        if (!(error instanceof RetryableError) || lastTry) await markQualifyFailed(String(data.organizationId), error instanceof Error ? error.message : "Ошибка квалификации");
         throw error;
       }
     }
+    else if (job.type === "sheets.push") await runSheetPush(String(data.kind), String(data.id));
+    else if (job.type === "sheets.full") await runSheetFull(String(data.tenantId));
+    else if (job.type === "project.webhook") await deliverWebhook(String(data.projectId), String(data.event));
     else throw new FatalJobError(`Неизвестный тип задачи ${job.type}`);
     await finishJob(job.id, { ok: true });
   } catch (error) {

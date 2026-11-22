@@ -8,6 +8,11 @@ import type { ResolvedIntegration } from "./config";
 
 export async function testIntegration(integration: ResolvedIntegration): Promise<{ scopes: string[]; detail: string }> {
   if (!integration.configured) throw new ApiError(422, "Сначала сохраните учётные данные.", "integration_not_configured");
+  if (integration.provider === "sheets") {
+    const { pingSheets } = await import("./sheets");
+    const result = await pingSheets(integration.secrets);
+    return { scopes: ["rows:write"], detail: `Таблица ответила${result.title ? `: «${result.title}»` : ""}. Листы создадутся при первой записи.` };
+  }
   if (integration.provider === "parser") {
     const base = String(integration.config.baseUrl);
     const health = await requestJson(`${base}/health`, { timeoutMs: 8000 });

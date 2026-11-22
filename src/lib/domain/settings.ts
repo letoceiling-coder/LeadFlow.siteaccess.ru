@@ -2,6 +2,7 @@ import { TASK_MODEL } from "./models";
 import type { ReplyContacts } from "./offer";
 import { DEFAULT_WEIGHTS, type ScoreWeights } from "./scoring";
 import { DEFAULT_ACTIVE_SEGMENTS, isSegment, type SegmentId } from "./segments";
+import { DEFAULT_TIMEZONE, isTimeZone } from "./time";
 
 export type TenantSettings = {
   automationMode: "manual" | "semi" | "auto";
@@ -21,7 +22,17 @@ export type TenantSettings = {
   retentionDays: number;
   demoMode: boolean;
   /** Охота по стратегии NEEKLO: активные сегменты, дневной лимит ручных отправок, авто-квалификация после поиска. */
-  hunt: { activeSegments: SegmentId[]; dailyLimit: number; autoQualify: boolean; autoQualifyMax: number };
+  hunt: {
+    activeSegments: SegmentId[];
+    dailyLimit: number;
+    autoQualify: boolean;
+    autoQualifyMax: number;
+    timezone: string;
+    /** Куда отправлять JSON проекта при создании (n8n, Studio, CRM). Пусто — не отправлять. */
+    projectWebhookUrl: string;
+    /** Ссылка на Google Таблицу для кнопки «Открыть таблицу». */
+    sheetUrl: string;
+  };
 };
 
 export const DEFAULT_SETTINGS: TenantSettings = {
@@ -41,7 +52,7 @@ export const DEFAULT_SETTINGS: TenantSettings = {
   reply: { phone: "", telegram: "", max: "", email: "" },
   retentionDays: 365,
   demoMode: false,
-  hunt: { activeSegments: [...DEFAULT_ACTIVE_SEGMENTS], dailyLimit: 25, autoQualify: true, autoQualifyMax: 60 },
+  hunt: { activeSegments: [...DEFAULT_ACTIVE_SEGMENTS], dailyLimit: 25, autoQualify: true, autoQualifyMax: 60, timezone: DEFAULT_TIMEZONE, projectWebhookUrl: "", sheetUrl: "" },
 };
 
 export function mergeSettings(value: unknown): TenantSettings {
@@ -70,5 +81,18 @@ function mergeHunt(value: unknown): TenantSettings["hunt"] {
     dailyLimit: Number.isFinite(limit) && limit >= 1 && limit <= 200 ? Math.round(limit) : base.dailyLimit,
     autoQualify: typeof source.autoQualify === "boolean" ? source.autoQualify : base.autoQualify,
     autoQualifyMax: Number.isFinite(max) && max >= 0 && max <= 500 ? Math.round(max) : base.autoQualifyMax,
+    timezone: isTimeZone(source.timezone) ? source.timezone : base.timezone,
+    projectWebhookUrl: httpsOrEmpty(source.projectWebhookUrl),
+    sheetUrl: httpsOrEmpty(source.sheetUrl),
   };
+}
+
+function httpsOrEmpty(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) return "";
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "https:" ? url.toString() : "";
+  } catch {
+    return "";
+  }
 }

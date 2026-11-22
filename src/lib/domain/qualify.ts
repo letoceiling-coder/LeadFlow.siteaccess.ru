@@ -75,11 +75,60 @@ export function allowedSources(facts: QualifyFacts): Set<string> {
   return allowed;
 }
 
-function cleanFacts(list: { text: string; source: string }[], allowed: Set<string>): CardFact[] {
+/** Из каких полей можно брать факт каждого вида. name, city, category фактом денег или хаоса быть не могут. */
+const SOURCES = {
+  money: new Set(["reviewCount", "rating", "services", "description", "features", "photoCount"]),
+  chaos: new Set(["websiteStatus", "website", "socials", "phones", "emails", "description", "features"]),
+  growth: new Set(["description", "features", "services", "reviewCount"]),
+} as const;
+
+function hasOwnSite(facts: QualifyFacts) {
+  return facts.websiteStatus === "WEBSITE_EXISTS" || (facts.websiteStatus === "UNCERTAIN" && Boolean(facts.website));
+}
+
+function sourceText(facts: QualifyFacts, source: string): string {
+  const value = (facts as Record<string, unknown>)[source];
+  if (value == null) return "";
+  return (Array.isArray(value) ? value.join(" ") : String(value)).toLowerCase();
+}
+
+/** Числа из текста факта должны встречаться в поле-источнике: «312 отзывов» при 146 отзывах отбрасывается. */
+function numbersSupported(text: string, source: string) {
+  const numbers = text.replace(/(\d)\s(?=\d{3}\b)/g, "$1").match(/\d+(?:[.,]\d+)?/g) ?? [];
+  const haystack = source.replace(/\s/g, "");
+  return numbers.every((num) => haystack.includes(num.replace(",", ".")) || haystack.includes(num));
+}
+
+/** Бесплатные конструкторы и визитки: сайт формально есть, но заявки и каталог на нём не живут. */
+const BUILDER_HOSTS = ["clients.site", "taplink.cc", "taplink.ws", "tilda.ws", "wixsite.com", "ucoz.ru", "ucoz.net", "nethouse.ru", "flexbe.online", "mssg.me", "hipolink.me", "vsite.biz", "business.site"];
+
+export function builderHost(website: string | null | undefined): string | null {
+  if (!website) return null;
+  try {
+    const host = new URL(website.startsWith("http") ? website : `https://${website}`).hostname.toLowerCase();
+    return BUILDER_HOSTS.find((item) => host === item || host.endsWith(`.${item}`)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Парсер не дочитал карточку: нет названия или нет ни контакта, ни сайта. Такую не отправляем в AI. */
+export function isIncomplete(facts: QualifyFacts) {
+  const name = facts.name.trim().toLowerCase();
+  const noName = !name || name === "unknown" || name === "без названия";
+  const noContact = !facts.phones.length && !facts.emails.length && !facts.socials.length && !facts.website;
+  return noName || noContact;
+}
+
+const NO_SITE = /нет (своего |собственного )?сайта|без сайта|сайта нет|не имеет сайта/i;
+
+function cleanFacts(kind: keyof typeof SOURCES, list: { text: string; source: string }[], facts: QualifyFacts, allowed: Set<string>): CardFact[] {
   const seen = new Set<string>();
   const out: CardFact[] = [];
   for (const item of list) {
-    if (!allowed.has(item.source)) continue;
+    if (!allowed.has(item.source) || !SOURCES[kind].has(item.source)) continue;
+    if (!numbersSupported(item.text, sourceText(facts, item.source))) continue;
+    if (NO_SITE.test(item.text) && hasOwnSite(facts)) continue;
     const key = item.text.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -99,15 +148,20 @@ function contactsOf(facts: QualifyFacts) {
 /** Собирает карточку §5: факты AI проходят проверку источника, детерминированные факты добавляются из данных. */
 export function buildCard(facts: QualifyFacts, ai: QualifyResult | null): ObservationCard {
   const allowed = allowedSources(facts);
-  const money = cleanFacts(ai?.money.facts ?? [], allowed);
-  const chaos = cleanFacts(ai?.chaos.facts ?? [], allowed);
-  const growth = cleanFacts(ai?.growth.facts ?? [], allowed);
+  const money = cleanFacts("money", ai?.money.facts ?? [], facts, allowed);
+  const chaos = cleanFacts("chaos", ai?.chaos.facts ?? [], facts, allowed);
+  const growth = cleanFacts("growth", ai?.growth.facts ?? [], facts, allowed);
 
   if ((facts.reviewCount ?? 0) >= 100 && !money.some((item) => item.source === "reviewCount")) {
     money.push({ text: `${facts.reviewCount} отзывов`, source: "reviewCount", kind: "fact" });
   }
   if (facts.websiteStatus === "NO_WEBSITE" && !chaos.some((item) => item.source === "websiteStatus" || item.source === "website")) {
     chaos.push({ text: "Нет своего сайта — только карточка на картах", source: "websiteStatus", kind: "fact" });
+  }
+
+  const builder = builderHost(facts.website);
+  if (builder && !chaos.some((item) => item.source === "website")) {
+    chaos.push({ text: `Сайт на бесплатном конструкторе (${builder}) — без каталога и заявок`, source: "website", kind: "fact" });
   }
 
   const aiSegment = ai?.segment && isSegment(ai.segment) ? ai.segment : null;
@@ -125,7 +179,10 @@ export function buildCard(facts: QualifyFacts, ai: QualifyResult | null): Observ
   }
 
   const noSite = chaos.some((item) => item.source === "websiteStatus");
-  const observation = ai?.observation?.trim() || (noSite ? "у вас нет своего сайта, клиенты находят вас только на картах" : chaos[0]?.text) || null;
+  // Крючок от AI берём, только если он не противоречит данным: «нет сайта» при живом сайте отбрасывается.
+  const aiHook = ai?.observation?.trim() || null;
+  const hookOk = aiHook && !(NO_SITE.test(aiHook) && hasOwnSite(facts)) && numbersSupported(aiHook, JSON.stringify(facts).toLowerCase());
+  const observation = (hookOk ? aiHook : null) || (noSite ? "у вас нет своего сайта, клиенты находят вас только на картах" : chaos[0]?.text) || null;
   return {
     segment,
     observation,

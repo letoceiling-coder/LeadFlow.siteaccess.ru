@@ -85,11 +85,10 @@ function firstName(raw: string | null | undefined) {
 export function buildPitch(card: ObservationCard, options: { contactName?: string | null } = {}) {
   const template = (card.segment && BY_SEGMENT[card.segment]) || FALLBACK;
   const hook = card.observation ? `Увидел, что ${lowerFirst(trimDot(card.observation))}. Верно?` : null;
-  const money = card.calc ? `При вашем чеке это может быть около ${card.calc.lostRub.toLocaleString("ru-RU")} ₽ в месяц.` : null;
   const lines = [
     firstName(options.contactName),
     hook,
-    [template.diagnosis, money].filter(Boolean).join(" "),
+    template.diagnosis,
     template.caseLine,
     template.offer,
   ].filter(Boolean);
@@ -113,11 +112,12 @@ export function followUpText(step: number) {
   return "Добрый день! Последний раз напоминаю о себе. Если тема станет актуальной — просто ответьте на это сообщение.";
 }
 
-/** Когда следующий follow-up: шаг 0 — после первой отправки. null — цепочка закончилась. */
-export function nextFollowUpAt(sentAt: Date, doneSteps: number): Date | null {
+/** Когда следующий follow-up: шаг 0 — после первой отправки. null — цепочка закончилась. Не раньше чем через 2 дня после предыдущего действия. */
+export function nextFollowUpAt(sentAt: Date, doneSteps: number, now: Date = sentAt): Date | null {
   const days = FOLLOW_UP_DAYS[doneSteps];
   if (days == null) return null;
-  return new Date(sentAt.getTime() + days * 24 * 60 * 60 * 1000);
+  const day = 24 * 60 * 60 * 1000;
+  return new Date(Math.max(sentAt.getTime() + days * day, now.getTime() + (now === sentAt ? 0 : 2 * day)));
 }
 
 export type ContactLink = { kind: "telegram" | "whatsapp" | "vk" | "email" | "phone" | "instagram" | "link"; label: string; href: string; prefill: boolean };

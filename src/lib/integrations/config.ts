@@ -38,6 +38,7 @@ function envSecrets(provider: ProviderId): Record<string, string> {
   if (provider === "telegram") return pick(["botToken", process.env.TELEGRAM_BOT_TOKEN], ["chatId", process.env.TELEGRAM_CHAT_ID]);
   if (provider === "whatsapp") return pick(["token", process.env.WHATSAPP_TOKEN], ["phoneNumberId", process.env.WHATSAPP_PHONE_NUMBER_ID]);
   if (provider === "sms") return pick(["apiId", process.env.SMS_API_ID], ["provider", process.env.SMS_PROVIDER]);
+  if (provider === "sheets") return pick(["webhookUrl", process.env.SHEETS_WEBHOOK_URL], ["token", process.env.SHEETS_TOKEN]);
   return pick(
     ["endpoint", process.env.STORAGE_ENDPOINT],
     ["bucket", process.env.STORAGE_BUCKET],
@@ -61,6 +62,7 @@ function hasMinimum(provider: ProviderId, secrets: Record<string, string>, confi
   if (provider === "telegram") return Boolean(secrets.botToken);
   if (provider === "whatsapp") return Boolean(secrets.token && secrets.phoneNumberId);
   if (provider === "sms") return secrets.provider === "smsru" && Boolean(secrets.apiId);
+  if (provider === "sheets") return Boolean(secrets.webhookUrl && secrets.token);
   return Boolean(secrets.endpoint && secrets.bucket && secrets.accessKey && secrets.secretKey && config);
 }
 

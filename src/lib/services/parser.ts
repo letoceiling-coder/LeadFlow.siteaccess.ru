@@ -138,7 +138,6 @@ export async function syncTaskOrganizations(taskId: string) {
   let imported = 0;
   let updated = 0;
   const seen = new Set<string>();
-  const createdIds: string[] = [];
   const remote = task.externalId ? asTask(await parser.getTask(task.externalId)) : null;
   const inline = remote?.result && typeof remote.result === "object" ? (remote.result as { organizations?: unknown[] }).organizations ?? [] : [];
   for (const item of inline) {
@@ -146,10 +145,8 @@ export async function syncTaskOrganizations(taskId: string) {
     if (!mapped) continue;
     const saved = await upsertMapped(task.tenantId, mapped);
     seen.add(saved.organization.id);
-    if (saved.created) {
-      imported += 1;
-      createdIds.push(saved.organization.id);
-    } else updated += 1;
+    if (saved.created) imported += 1;
+    else updated += 1;
   }
   if (task.externalId) {
     let offset = 0;
@@ -161,25 +158,24 @@ export async function syncTaskOrganizations(taskId: string) {
         if (!mapped) continue;
         const saved = await upsertMapped(task.tenantId, mapped);
         seen.add(saved.organization.id);
-        if (saved.created) {
-          imported += 1;
-          createdIds.push(saved.organization.id);
-        } else updated += 1;
+        if (saved.created) imported += 1;
+        else updated += 1;
       }
       if (body.nextOffset == null) break;
       offset = body.nextOffset;
     }
   }
+  // Квалификация — до отметки syncedAt и по всем увиденным карточкам: при повторе после сбоя ничего не теряется.
+  try {
+    const { autoQualifyNew } = await import("./hunt");
+    await autoQualifyNew(task.tenantId, [...seen]);
+  } catch (error) {
+    safeLog("hunt.autoQualify", error);
+  }
   await prisma.parserTask.update({
     where: { id: taskId },
       data: { organizationCount: seen.size, resultSummary: { imported, updated, unique: seen.size }, syncedAt: new Date() },
   });
-  try {
-    const { autoQualifyNew } = await import("./hunt");
-    await autoQualifyNew(task.tenantId, createdIds);
-  } catch (error) {
-    safeLog("hunt.autoQualify", error);
-  }
   return { imported, updated };
 }
 
