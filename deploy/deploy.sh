@@ -31,6 +31,10 @@ ls -1t /root/leadflow-releases/src-*.tgz | tail -n +6 | xargs -r rm -f
 docker tag leadflow-app:latest leadflow-app:prev 2>/dev/null || true
 docker tag leadflow-worker:latest leadflow-worker:prev 2>/dev/null || true
 
+# Архив только добавляет файлы. Удалённые в git страницы остались бы на сервере и сломали сборку,
+# поэтому папки с кодом очищаются целиком (копия выше). .env, данные и volume не трогаются.
+rm -rf /opt/leadflow/src /opt/leadflow/public /opt/leadflow/prisma /opt/leadflow/tests
+
 if ! sh /opt/leadflow/deploy/remote-up.sh > /tmp/leadflow-deploy.log 2>&1; then
   tail -40 /tmp/leadflow-deploy.log
   echo "✗ Сборка упала. Работает прежняя версия (контейнеры не пересоздавались)."
