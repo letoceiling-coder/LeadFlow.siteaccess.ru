@@ -12,7 +12,7 @@ import { markQualifyFailed, runQualify } from "../services/hunt";
 import { runSheetFull, runSheetPush } from "../services/sheets";
 import { deliverWebhook } from "../services/projects";
 
-type JobRow = { id: string; type: string; payload: unknown; cancelRequested: boolean };
+type JobRow = { id: string; tenantId: string; type: string; payload: unknown; cancelRequested: boolean };
 
 function payload(job: JobRow): Record<string, unknown> {
   return job.payload && typeof job.payload === "object" ? (job.payload as Record<string, unknown>) : {};
@@ -50,7 +50,7 @@ export async function processJob(job: JobRow) {
     else if (job.type === "agent.turn") await runAgentTurn(String(data.threadId));
     else if (job.type === "hunt.qualify") {
       try {
-        await runQualify(String(data.organizationId));
+        await runQualify(String(data.organizationId), job.tenantId);
       } catch (error) {
         // Карточка не должна навсегда остаться «в очереди»: помечаем сбой, если повторов больше не будет.
         const current = await prisma.job.findUnique({ where: { id: job.id }, select: { attempts: true, maxAttempts: true } });
@@ -59,9 +59,10 @@ export async function processJob(job: JobRow) {
         throw error;
       }
     }
-    else if (job.type === "sheets.push") await runSheetPush(String(data.kind), String(data.id));
-    else if (job.type === "sheets.full") await runSheetFull(String(data.tenantId));
-    else if (job.type === "project.webhook") await deliverWebhook(String(data.projectId), String(data.event));
+    // Пространство берётся из самой задачи, а не из payload: задача не может тронуть чужие данные.
+    else if (job.type === "sheets.push") await runSheetPush(String(data.kind), String(data.id), job.tenantId);
+    else if (job.type === "sheets.full") await runSheetFull(job.tenantId);
+    else if (job.type === "project.webhook") await deliverWebhook(String(data.projectId), String(data.event), job.tenantId);
     else throw new FatalJobError(`Неизвестный тип задачи ${job.type}`);
     await finishJob(job.id, { ok: true });
   } catch (error) {

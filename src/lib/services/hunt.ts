@@ -79,12 +79,13 @@ export async function enqueueQualify(tenantId: string, actorId: string | null, o
     // Карточки в живом диалоге не трогаем: повторная квалификация могла бы спрятать напоминание.
     if (org.outreach && !OPEN.includes(org.outreach.status)) { skipped += 1; continue; }
     if (org.outreach?.cardStatus === "queued" && (await hasLiveQualifyJob(tenantId, org.id))) { skipped += 1; continue; }
-    await enqueueJob({ tenantId, type: "hunt.qualify", payload: { organizationId: org.id }, idempotencyKey: `qualify:${org.id}:${Date.now()}` });
+    // Сначала «в очереди», потом задача: иначе быстрый обработчик успел бы поставить «готово», а upsert вернул бы «в очереди».
     await prisma.outreach.upsert({
       where: { organizationId: org.id },
       update: { cardStatus: "queued", error: null },
       create: { tenantId, organizationId: org.id, cardStatus: "queued", segment: detectSegment(org.category, org.categories) },
     });
+    await enqueueJob({ tenantId, type: "hunt.qualify", payload: { organizationId: org.id }, idempotencyKey: `qualify:${org.id}:${Date.now()}` });
     queued += 1;
   }
   if (actorId) await audit({ tenantId, actorId, action: "hunt.qualify", meta: { queued, skipped } });
@@ -133,9 +134,9 @@ export async function autoQualifyNew(tenantId: string, organizationIds: string[]
   if (ids.length) await enqueueQualify(tenantId, null, ids, true);
 }
 
-export async function runQualify(organizationId: string) {
+export async function runQualify(organizationId: string, jobTenantId?: string) {
   const org = await prisma.organization.findUnique({ where: { id: organizationId }, include: { contacts: true } });
-  if (!org) return;
+  if (!org || (jobTenantId && org.tenantId !== jobTenantId)) return;
   const tenantId = org.tenantId;
   const existing = await prisma.outreach.findUnique({ where: { organizationId } });
   if (existing && !OPEN.includes(existing.status)) return;
@@ -532,6 +533,21 @@ export async function setStatus(tenantId: string, actorId: string, id: string, i
   const row = await owned(tenantId, id);
   const flow = STATUS_FLOW[input.status];
   if (!flow.from.includes(row.status)) throw new ApiError(409, `Из статуса «${row.status}» нельзя перейти в «${flow.label}».`, "bad_transition");
+  // Проект создаётся до смены статуса: если создание упадёт, статус не изменится и повтор сработает. Создание идемпотентно.
+  // Этап проекта следует за лидом: «Смета» → смета, «Сделка» → договор и аванс (§3, шаг 12 стратегии).
+  let projectId: string | null = row.project?.id ?? null;
+  if (input.status === "estimate" || input.status === "won") {
+    const stage = input.status === "won" ? "prepaid" : "estimate";
+    const { createProject, updateProject } = await import("./projects");
+    if (!projectId) {
+      const created = await createProject(tenantId, actorId, { outreachId: id }, "hunt", stage);
+      projectId = created.project.id;
+    } else {
+      const current = await prisma.project.findFirst({ where: { id: projectId, tenantId }, select: { stage: true } });
+      const order = ["brief", "estimate", "prepaid"];
+      if (current && order.indexOf(current.stage) >= 0 && order.indexOf(current.stage) < order.indexOf(stage)) await updateProject(tenantId, actorId, projectId, { stage });
+    }
+  }
   const nextStatus = input.status === "optout" ? "lost" : input.status;
   const updated = await prisma.outreach.updateMany({
     where: { id, tenantId, status: row.status },
@@ -545,12 +561,6 @@ export async function setStatus(tenantId: string, actorId: string, id: string, i
   if (!updated.count) throw new ApiError(409, "Статус уже изменили на другом устройстве.", "conflict");
   await activity({ tenantId, organizationId: row.organizationId, actorId, type: `outreach.${input.status}`, message: `${flow.label}${input.note ? `: ${input.note}` : ""}` });
   if (flow.stage) await moveLead(tenantId, row.organizationId, flow.stage, actorId);
-  let projectId: string | null = row.project?.id ?? null;
-  if ((input.status === "estimate" || input.status === "won") && !projectId) {
-    const { createProject } = await import("./projects");
-    const created = await createProject(tenantId, actorId, { outreachId: id }, "hunt");
-    projectId = created.project.id;
-  }
   await queueSheet(tenantId, "outreach", id);
   return { ok: true, projectId };
 }

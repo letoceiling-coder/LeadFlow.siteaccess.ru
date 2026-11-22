@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Download, Plus, Send, UserRound } from "lucide-react";
 import { useHunt } from "./shell";
 import { post, useLive } from "./data";
@@ -19,20 +19,27 @@ export function ProjectPanel({ id }: { id: string | null }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  const initFor = useRef<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const fromData = (row: Project) => ({
+    title: row.title,
+    amount: row.amount == null ? "" : String(row.amount),
+    deadlineAt: row.deadlineAt ? row.deadlineAt.slice(0, 10) : "",
+    contactName: row.contactName ?? "",
+    contactValue: row.contactValue ?? "",
+    notes: row.notes ?? "",
+    product: row.product ?? "",
+  });
+
+  // Форма заполняется при каждом открытии проекта (в том числе того же самого), но не при фоновых обновлениях.
+  useEffect(() => { if (!id) initFor.current = null; }, [id]);
   useEffect(() => {
-    if (!data) return;
-    setForm({
-      title: data.title,
-      amount: data.amount == null ? "" : String(data.amount),
-      deadlineAt: data.deadlineAt ? data.deadlineAt.slice(0, 10) : "",
-      contactName: data.contactName ?? "",
-      contactValue: data.contactValue ?? "",
-      notes: data.notes ?? "",
-      product: data.product ?? "",
-    });
-    // Форма заполняется при открытии проекта, а не при каждом обновлении — иначе затирались бы правки.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.id]);
+    if (!data || initFor.current === data.id) return;
+    initFor.current = data.id;
+    setForm(fromData(data));
+    setError("");
+  }, [data]);
 
   async function patch(body: Record<string, unknown>, ok?: string) {
     if (!data) return;
@@ -50,15 +57,49 @@ export function ProjectPanel({ id }: { id: string | null }) {
     }
   }
 
-  function saveField(key: keyof typeof form) {
-    if (!data) return;
-    const raw = form[key].trim();
-    const current = key === "amount" ? (data.amount == null ? "" : String(data.amount)) : key === "deadlineAt" ? (data.deadlineAt ?? "").slice(0, 10) : String((data as Record<string, unknown>)[key] ?? "");
-    if (raw === current) return;
-    if (key === "title" && raw.length < 2) return setError("Название — минимум 2 символа");
-    const value = key === "amount" ? (raw ? Math.max(0, Math.round(Number(raw.replace(/\s/g, "")))) : null) : raw || null;
-    if (key === "amount" && value !== null && !Number.isFinite(value as number)) return setError("Сумма — числом");
-    void patch({ [key]: value }, "Сохранено");
+  /** Изменённые и корректные поля формы → тело PATCH. */
+  const dirtyPatch = useCallback((): Record<string, unknown> | null => {
+    if (!data) return null;
+    const base = fromData(data);
+    const body: Record<string, unknown> = {};
+    for (const key of Object.keys(form) as (keyof typeof form)[]) {
+      const raw = form[key].trim();
+      if (raw === base[key].trim()) continue;
+      if (key === "title") { if (raw.length >= 2) body.title = raw; continue; }
+      if (key === "amount") {
+        const value = raw ? Math.round(Number(raw.replace(/\s/g, ""))) : null;
+        if (value === null || (Number.isFinite(value) && value >= 0)) body.amount = value;
+        continue;
+      }
+      body[key] = raw || null;
+    }
+    return Object.keys(body).length ? body : null;
+  }, [data, form]);
+
+  // Автосохранение через 0,9 с после последнего ввода.
+  useEffect(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      const body = dirtyPatch();
+      if (body) void patch(body);
+    }, 900);
+    return () => { if (timer.current) clearTimeout(timer.current); };
+  }, [form]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Закрытие любым способом (крестик, фон, Esc) сначала сохраняет несохранённое. */
+  async function closeSaving() {
+    if (timer.current) clearTimeout(timer.current);
+    const body = dirtyPatch();
+    if (body && data) {
+      try {
+        await post(`/api/hunt/projects/${data.id}`, body, "PATCH");
+        refresh();
+      } catch (reason) {
+        setError(errorText(reason));
+        return;
+      }
+    }
+    close();
   }
 
   async function webhook() {
@@ -77,20 +118,19 @@ export function ProjectPanel({ id }: { id: string | null }) {
   const field = (key: keyof typeof form) => ({
     value: form[key],
     onChange: (event: { target: { value: string } }) => setForm((prev) => ({ ...prev, [key]: event.target.value })),
-    onBlur: () => saveField(key),
   });
 
   return (
     <Sheet
       open={Boolean(id)}
-      onClose={close}
+      onClose={closeSaving}
       title={data?.title ?? "Проект"}
       subtitle={data ? [data.organization?.name !== data.title ? data.organization?.name : null, data.scenarioTitle, rub(data.amount)].filter(Boolean).join(" · ") : null}
       badge={data ? <Ring done={data.progress.done} total={data.progress.total} /> : null}
       footer={data ? (
         <div className="grid grid-cols-2 gap-2">
           <a href={`/api/hunt/projects/${data.id}/json`} download className="glass inline-flex h-12 items-center justify-center gap-2 rounded-2xl text-[15px] font-medium"><Download className="h-4 w-4" /> JSON</a>
-          <Button variant="accent" className="h-12 rounded-2xl" pending={busy} onClick={webhook}><Send className="h-4 w-4" /> Отправить по API</Button>
+          <Button variant="accent" className="h-12 rounded-2xl" pending={busy} onClick={webhook}><Send className="h-4 w-4" /> <span className="max-[359px]:hidden">Отправить</span> по API</Button>
         </div>
       ) : null}
     >
@@ -127,13 +167,13 @@ export function ProjectPanel({ id }: { id: string | null }) {
           <section className="space-y-4">
             <Field label="Название"><input className={inputClass} {...field("title")} /></Field>
             <Field label="Продукт"><input className={inputClass} {...field("product")} placeholder="Сайт доставки, кабинет дилера…" /></Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Сумма, ₽"><input className={inputClass} inputMode="numeric" {...field("amount")} /></Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Сумма, ₽"><input className={inputClass} inputMode="numeric" autoComplete="off" {...field("amount")} /></Field>
               <Field label="Дедлайн"><input type="date" className={inputClass} {...field("deadlineAt")} /></Field>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Контакт"><input className={inputClass} {...field("contactName")} placeholder="Имя" /></Field>
-              <Field label="Телефон / ник"><input className={inputClass} {...field("contactValue")} /></Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Контакт"><input className={inputClass} autoComplete="name" {...field("contactName")} placeholder="Имя" /></Field>
+              <Field label="Телефон / ник"><input className={inputClass} autoComplete="tel" inputMode="tel" {...field("contactValue")} /></Field>
             </div>
             <Field label="Заметки"><textarea rows={4} className={textareaClass} {...field("notes")} placeholder="Договорённости, доступы, пожелания" /></Field>
           </section>

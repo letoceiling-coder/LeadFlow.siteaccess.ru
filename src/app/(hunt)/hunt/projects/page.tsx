@@ -44,14 +44,15 @@ export default function HuntProjectsPage() {
               <Glass className="flex items-center gap-4 px-4 py-4 transition hover:bg-white/[0.07]">
                 <Ring done={item.progress.done} total={item.progress.total} size={48} />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[17px] font-semibold">{item.title}</div>
+                  <div className="line-clamp-2 text-[17px] font-semibold leading-6">{item.title}</div>
                   <div className="mt-0.5 truncate text-sm text-[var(--h-muted)]">{[item.scenarioTitle ?? item.product, item.organization?.city].filter(Boolean).join(" · ")}</div>
                   <div className="mt-1.5 flex items-center gap-2 text-[13px]">
                     <span className={cx("rounded-full px-2 py-0.5 font-medium", item.stage === "done" ? "bg-[rgba(59,224,138,0.14)] text-[#8ff0bd]" : "bg-white/10")}>{PROJECT_STAGE_LABEL[item.stage]}</span>
-                    <span className="text-[var(--h-faint)]">обновлён {dayLabel(item.updatedAt)}</span>
+                    <span className="font-semibold tabular-nums min-[400px]:hidden">{rub(item.amount)}</span>
+                    <span className="text-[var(--h-faint)] max-[399px]:hidden">обновлён {dayLabel(item.updatedAt)}</span>
                   </div>
                 </div>
-                <div className="text-right text-[15px] font-semibold tabular-nums">{rub(item.amount)}</div>
+                <div className="text-right text-[15px] font-semibold tabular-nums max-[399px]:hidden">{rub(item.amount)}</div>
               </Glass>
             </button>
           ))}

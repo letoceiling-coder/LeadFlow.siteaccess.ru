@@ -18,12 +18,14 @@ function greeting(timeZone: string) {
 export default function HuntTodayPage() {
   const { version, refresh, open, user } = useHunt();
   const toast = useToast();
-  const [tab, setTab] = useState<Tab>("new");
+  const [picked, setTab] = useState<Tab | null>(null);
   const [segment, setSegment] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const todayRes = useLive<Today>("/api/hunt/today?limit=50", version, 15000);
   const dialogs = useLive<Dialogs>("/api/hunt/dialogs", version);
   const data = todayRes.data;
+  // Напоминания — самые дешёвые ответы: если они есть, лента открывается на них.
+  const tab: Tab = picked ?? (data?.followUps ? "remind" : "new");
 
   const segments = useMemo(() => {
     const map = new Map<string, string>();

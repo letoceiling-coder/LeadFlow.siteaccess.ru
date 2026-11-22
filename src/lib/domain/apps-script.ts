@@ -16,7 +16,7 @@ var TOKEN = "__TOKEN__";
 function doPost(e) {
   try {
     var body = JSON.parse(e.postData.contents);
-    if (!TOKEN || TOKEN.indexOf("__") === 0 || body.token !== TOKEN) return reply({ ok: false, error: "unauthorized" });
+    if (!TOKEN || TOKEN.length < 20 || body.token !== TOKEN) return reply({ ok: false, error: "unauthorized" });
     var book = SpreadsheetApp.getActiveSpreadsheet();
     if (body.action === "ping") return reply({ ok: true, title: book.getName() });
     if (body.action === "upsert") {
@@ -39,6 +39,7 @@ function doGet() {
 }
 
 function upsert(book, name, header, rows, key) {
+  if (["Лиды", "Проекты"].indexOf(name) === -1) throw new Error("unknown sheet");
   var sheet = book.getSheetByName(name) || book.insertSheet(name);
   var lastCol = sheet.getLastColumn();
   var current = lastCol ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String) : [];
@@ -62,7 +63,7 @@ function upsert(book, name, header, rows, key) {
   }
   var written = 0;
   rows.forEach(function (row) {
-    var values = current.map(function (title) { var v = row[title]; return v === null || v === undefined ? "" : v; });
+    var values = current.map(function (title) { return safe(row[title]); });
     var at = index[String(row[key])];
     if (at) {
       sheet.getRange(at, 1, 1, values.length).setValues([values]);
@@ -73,6 +74,13 @@ function upsert(book, name, header, rows, key) {
     written++;
   });
   return written;
+}
+
+// Значение из чужих данных не должно стать формулой: «=IMPORTXML(...)» в названии компании.
+function safe(v) {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "string" && /^[=+\\-@\\t\\r]/.test(v)) return "'" + v;
+  return v;
 }
 
 function reply(data) {

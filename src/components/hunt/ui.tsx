@@ -159,19 +159,35 @@ export function Notice({ tone = "info", children }: { tone?: "info" | "error" | 
 
 export function Sheet({ open, onClose, title, subtitle, badge, children, footer }: { open: boolean; onClose: () => void; title: ReactNode; subtitle?: ReactNode; badge?: ReactNode; children: ReactNode; footer?: ReactNode }) {
   const panel = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     if (!open) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    const trigger = document.activeElement as HTMLElement | null;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { closeRef.current(); return; }
+      if (event.key !== "Tab" || !panel.current) return;
+      // Фокус не уходит за пределы панели, пока она открыта.
+      const focusable = panel.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])');
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
     window.addEventListener("keydown", onKey);
-    const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     panel.current?.focus();
-    return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = previous; };
-  }, [open, onClose]);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+      trigger?.focus?.();
+    };
+  }, [open]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50">
-      <button aria-label="Закрыть" onClick={onClose} className="anim-fade absolute inset-0 bg-black/55 backdrop-blur-[2px]" />
+      <button aria-hidden="true" tabIndex={-1} onClick={onClose} className="anim-fade absolute inset-0 bg-black/55 backdrop-blur-[2px]" />
       <div
         ref={panel}
         tabIndex={-1}
@@ -182,11 +198,12 @@ export function Sheet({ open, onClose, title, subtitle, badge, children, footer 
           "anim-sheet inset-x-0 bottom-0 max-h-[94dvh] rounded-t-[28px]",
           "md:inset-y-3 md:left-auto md:right-3 md:max-h-none md:w-[480px] md:rounded-[28px]",
         )}
+        aria-label={typeof title === "string" ? title : undefined}
       >
         <div className="mx-auto mt-2.5 h-1.5 w-10 rounded-full bg-white/20 md:hidden" />
         <header className="flex items-start gap-3 px-5 pb-3 pt-3 md:pt-5">
           <div className="min-w-0 flex-1">
-            <h2 className="text-[22px] font-semibold leading-7 tracking-tight">{title}</h2>
+            <h2 className="break-words text-[22px] font-semibold leading-7 tracking-tight [overflow-wrap:anywhere]">{title}</h2>
             {subtitle ? <div className="mt-1 text-sm text-[var(--h-muted)]">{subtitle}</div> : null}
           </div>
           {badge}

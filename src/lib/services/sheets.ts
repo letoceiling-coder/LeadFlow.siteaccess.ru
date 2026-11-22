@@ -1,5 +1,7 @@
 import "server-only";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
+import { sheetSafe } from "../domain/sheet-safe";
 import { isReady, resolveIntegration } from "../integrations/config";
 import { upsertRows } from "../integrations/sheets";
 import { enqueueJob } from "../jobs/queue";
@@ -17,15 +19,24 @@ const PROJECT_HEADER = ["id", "Создан", "Проект", "Компания"
 
 const STATUS: Record<string, string> = { new: "Новая", approved: "В работе", rejected: "Отклонена", snoozed: "Отложена", sent: "Отправлено", replied: "Ответил", call: "Созвон", estimate: "Смета", won: "Сделка", lost: "Отказ", sleeping: "Спящий" };
 
+function safeRow(row: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, sheetSafe(value)]));
+}
+
 function day(value: Date | null | undefined) {
   return value ? value.toISOString().slice(0, 16).replace("T", " ") : "";
 }
 
-/** Поставить строку в очередь. Частые изменения одной карточки склеиваются в одну запись за 10 секунд. */
+/**
+ * Поставить строку в очередь. Каждое изменение ставит свою задачу (ничего не теряется),
+ * а лишние отправки отсекает сама задача: если строка уже выгружена после последнего изменения — пропуск.
+ */
 export async function queueSheet(tenantId: string, kind: "outreach" | "project", id: string) {
   try {
     if (!(await isReady(tenantId, "sheets"))) return;
-    await enqueueJob({ tenantId, type: "sheets.push", payload: { kind, id }, delayMs: 3000, idempotencyKey: `sheets:${kind}:${id}:${Math.floor(Date.now() / 10000)}` });
+    const pending = await prisma.job.findFirst({ where: { tenantId, type: "sheets.push", status: "queued", payload: { path: ["id"], equals: id } }, select: { id: true } });
+    if (pending) return; // уже ждёт в очереди и выгрузит самое свежее состояние
+    await enqueueJob({ tenantId, type: "sheets.push", payload: { kind, id }, delayMs: 3000, idempotencyKey: `sheets:${kind}:${id}:${Date.now()}` });
   } catch {
     // Таблица — зеркало: её сбой не должен ломать основное действие.
   }
@@ -95,19 +106,28 @@ async function projectRows(where: { tenantId: string; id?: { in: string[] } }) {
   });
 }
 
-export async function runSheetPush(kind: string, id: string) {
+/** Отметка выгрузки сырым запросом: @updatedAt не сдвигается, и сравнение «выгружено после изменения» остаётся честным. */
+async function markSynced(kind: "project" | "outreach", ids: string[], at: Date) {
+  if (!ids.length) return;
+  if (kind === "project") await prisma.$executeRaw`UPDATE "Project" SET "sheetSyncedAt" = ${at} WHERE id IN (${Prisma.join(ids)})`;
+  else await prisma.$executeRaw`UPDATE "Outreach" SET "sheetSyncedAt" = ${at} WHERE id IN (${Prisma.join(ids)})`;
+}
+
+export async function runSheetPush(kind: string, id: string, jobTenantId?: string) {
   const record = kind === "project" ? await prisma.project.findUnique({ where: { id } }) : await prisma.outreach.findUnique({ where: { id } });
-  if (!record) return;
+  if (!record || (jobTenantId && record.tenantId !== jobTenantId)) return;
+  if (record.sheetSyncedAt && record.sheetSyncedAt >= record.updatedAt) return;
+  const startedAt = new Date();
   const integration = await resolveIntegration(record.tenantId, "sheets");
   if (!integration.configured || integration.status !== "connected") return;
   if (kind === "project") {
     const rows = await projectRows({ tenantId: record.tenantId, id: { in: [id] } });
-    await upsertRows(integration.secrets, PROJECT_SHEET, PROJECT_HEADER, rows.map((row) => row.values));
-    await prisma.project.update({ where: { id }, data: { sheetSyncedAt: new Date() } });
+    await upsertRows(integration.secrets, PROJECT_SHEET, PROJECT_HEADER, rows.map((row) => safeRow(row.values)));
+    await markSynced("project", [id], startedAt);
   } else {
     const rows = await leadRows({ tenantId: record.tenantId, id: { in: [id] } });
-    await upsertRows(integration.secrets, LEAD_SHEET, LEAD_HEADER, rows.map((row) => row.values));
-    if (rows.length) await prisma.outreach.update({ where: { id }, data: { sheetSyncedAt: new Date() } });
+    await upsertRows(integration.secrets, LEAD_SHEET, LEAD_HEADER, rows.map((row) => safeRow(row.values)));
+    if (rows.length) await markSynced("outreach", [id], startedAt);
   }
 }
 
@@ -118,14 +138,16 @@ export async function runSheetFull(tenantId: string) {
   const leads = await leadRows({ tenantId });
   for (let i = 0; i < leads.length; i += 200) {
     const chunk = leads.slice(i, i + 200);
-    await upsertRows(integration.secrets, LEAD_SHEET, LEAD_HEADER, chunk.map((row) => row.values));
-    await prisma.outreach.updateMany({ where: { id: { in: chunk.map((row) => row.record.id) } }, data: { sheetSyncedAt: new Date() } });
+    const at = new Date();
+    await upsertRows(integration.secrets, LEAD_SHEET, LEAD_HEADER, chunk.map((row) => safeRow(row.values)));
+    await markSynced("outreach", chunk.map((row) => row.record.id), at);
   }
   const projects = await projectRows({ tenantId });
   for (let i = 0; i < projects.length; i += 200) {
     const chunk = projects.slice(i, i + 200);
-    await upsertRows(integration.secrets, PROJECT_SHEET, PROJECT_HEADER, chunk.map((row) => row.values));
-    await prisma.project.updateMany({ where: { id: { in: chunk.map((row) => row.record.id) } }, data: { sheetSyncedAt: new Date() } });
+    const at = new Date();
+    await upsertRows(integration.secrets, PROJECT_SHEET, PROJECT_HEADER, chunk.map((row) => safeRow(row.values)));
+    await markSynced("project", chunk.map((row) => row.record.id), at);
   }
   return { leads: leads.length, projects: projects.length };
 }

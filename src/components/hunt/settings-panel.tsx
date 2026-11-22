@@ -44,7 +44,16 @@ export function SettingsPanel({ open }: { open: boolean }) {
   useEffect(() => {
     if (hunt) { setSheetUrl(hunt.sheetUrl); setProjectWebhook(hunt.projectWebhookUrl); }
   }, [hunt]);
-  useEffect(() => { if (open && !token) setToken(newToken()); }, [open, token]);
+  // Токен живёт в браузере, пока таблица не подключена: перезагрузка страницы не ломает уже вставленный в Apps Script код.
+  useEffect(() => {
+    if (!open || token) return;
+    let saved: string | null = null;
+    try { saved = window.localStorage.getItem("lf-sheets-token"); } catch { /* приватный режим */ }
+    const next = saved && saved.length >= 32 ? saved : newToken();
+    try { window.localStorage.setItem("lf-sheets-token", next); } catch { /* приватный режим */ }
+    setToken(next);
+  }, [open, token]);
+  const secret = useLive<{ secret: string; header: string; algorithm: string }>(open && admin ? "/api/hunt/webhook-secret" : null);
 
   const script = useMemo(() => (token ? appsScript(token) : ""), [token]);
 
@@ -175,7 +184,7 @@ export function SettingsPanel({ open }: { open: boolean }) {
               <Field label="Ссылка веб-приложения" hint="Вида https://script.google.com/macros/s/…/exec"><input className={inputClass} value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} placeholder="https://script.google.com/macros/s/…/exec" /></Field>
               <Field label="Ссылка на саму таблицу" hint="Для кнопки «Открыть таблицу»"><input className={inputClass} value={sheetUrl} onChange={(event) => setSheetUrl(event.target.value)} placeholder="https://docs.google.com/spreadsheets/d/…" /></Field>
               <Button variant="accent" size="lg" className="w-full" pending={busy} disabled={!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(webhookUrl.trim())} onClick={connectSheets}>{connected ? "Переподключить" : "Подключить"}</Button>
-              <p className="text-xs text-[var(--h-faint)]">Переподключаете? Скопируйте код заново — после перезагрузки страницы токен будет новым.</p>
+              <button className="text-xs text-[var(--h-faint)] underline" onClick={() => { const next = newToken(); try { window.localStorage.setItem("lf-sheets-token", next); } catch { /* приватный режим */ } setToken(next); toast({ text: "Новый токен — скопируйте код заново" }); }}>Сгенерировать новый токен</button>
             </>
           ) : null}
         </section>
@@ -186,6 +195,15 @@ export function SettingsPanel({ open }: { open: boolean }) {
             <p className="text-sm text-[var(--h-muted)]">Когда создаётся проект, LeadFlow отправит POST с полным JSON (схема leadflow.project.v1) на этот адрес — n8n, Make, Studio, ваша CRM.</p>
             <Field label="Адрес приёмника (https)"><input className={inputClass} value={projectWebhook} onChange={(event) => setProjectWebhook(event.target.value)} placeholder="https://…" /></Field>
             <Button size="md" pending={busy} disabled={projectWebhook.trim() === hunt.projectWebhookUrl} onClick={() => save({ projectWebhookUrl: projectWebhook.trim() }, projectWebhook.trim() ? "Адрес сохранён" : "Отправка по API выключена")}>Сохранить адрес</Button>
+            {secret.data ? (
+              <Glass className="space-y-1.5 p-4 text-sm">
+                <div className="text-[var(--h-muted)]">Подпись запроса для проверки на приёмнике</div>
+                <div>Заголовок <code className="rounded bg-white/10 px-1.5 py-0.5">{secret.data.header}</code> — {secret.data.algorithm}</div>
+                <button className="flex w-full items-center gap-2 text-left" onClick={() => navigator.clipboard.writeText(secret.data!.secret).then(() => toast({ text: "Секрет скопирован" })).catch(() => undefined)}>
+                  <code className="min-w-0 flex-1 truncate rounded bg-white/10 px-2 py-1 text-xs">{secret.data.secret}</code><Copy className="h-4 w-4 shrink-0" />
+                </button>
+              </Glass>
+            ) : null}
           </section>
         ) : null}
       </div>

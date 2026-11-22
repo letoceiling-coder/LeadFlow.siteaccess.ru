@@ -8,27 +8,36 @@ export function useLive<T>(url: string | null, version = 0, pollMs?: number | fa
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(url));
-  const alive = useRef(true);
+  // Каждый запрос получает номер: поздний ответ от старого адреса (другая карточка) отбрасывается.
+  const latest = useRef(0);
+  const shownUrl = useRef<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!url) return;
+    const ticket = ++latest.current;
     try {
       const next = await api<T>(url);
-      if (!alive.current) return;
+      if (ticket !== latest.current) return;
+      shownUrl.current = url;
       setData(next);
       setError(null);
     } catch (reason) {
-      if (alive.current) setError(reason instanceof Error ? reason.message : "Не удалось загрузить");
+      if (ticket === latest.current) setError(reason instanceof Error ? reason.message : "Не удалось загрузить");
     } finally {
-      if (alive.current) setLoading(false);
+      if (ticket === latest.current) setLoading(false);
     }
   }, [url]);
 
   useEffect(() => {
-    alive.current = true;
+    if (shownUrl.current !== url) {
+      // Новый адрес — чужие данные и ошибку не показываем.
+      setData(null);
+      setError(null);
+      setLoading(Boolean(url));
+    }
     void reload();
-    return () => { alive.current = false; };
-  }, [reload, version]);
+    return () => { latest.current += 1; };
+  }, [reload, version, url]);
 
   useEffect(() => {
     if (!pollMs) return;

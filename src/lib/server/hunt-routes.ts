@@ -24,7 +24,7 @@ import {
   statusSchema,
   today,
 } from "../services/hunt";
-import { createProject, getProject, listProjects, projectCreateSchema, projectExport, projectPatchSchema, resendWebhook, updateProject } from "../services/projects";
+import { webhookSecret, createProject, getProject, listProjects, projectCreateSchema, projectExport, projectPatchSchema, resendWebhook, updateProject } from "../services/projects";
 import { queueFullSync, sheetStatus } from "../services/sheets";
 
 function allow(session: AppSession, permission: string) {
@@ -75,6 +75,10 @@ export async function huntRoutes(request: Request, session: AppSession, path: st
     return json(await retryFailed(tenantId, session.userId), 202);
   }
 
+  if (section === "webhook-secret" && method === "GET") {
+    allow(session, "settings.manage");
+    return json({ secret: webhookSecret(tenantId), header: "X-LeadFlow-Signature", algorithm: "HMAC-SHA256 от тела запроса, формат sha256=<hex>" });
+  }
   if (section === "sheets") {
     if (method === "GET") {
       allow(session, "org.read");

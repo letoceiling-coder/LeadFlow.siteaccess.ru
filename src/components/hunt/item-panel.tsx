@@ -99,6 +99,17 @@ export function ItemPanel({ id }: { id: string | null }) {
   const [rejecting, setRejecting] = useState(false);
   const [showFactors, setShowFactors] = useState(false);
   const initFor = useRef("");
+  const [awaiting, setAwaiting] = useState(false);
+  const [returned, setReturned] = useState(false);
+
+  // Вернулись из мессенджера — напоминаем отметить отправку, чтобы касание не потерялось.
+  useEffect(() => {
+    if (!awaiting) return;
+    const onVisible = () => { if (document.visibilityState === "visible") { setReturned(true); setAwaiting(false); } };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [awaiting]);
+  useEffect(() => { setReturned(false); setAwaiting(false); }, [id]);
 
   const firstContact = data ? ["new", "approved", "snoozed"].includes(data.status) : false;
   const writing = data?.status === "approved";
@@ -153,6 +164,7 @@ export function ItemPanel({ id }: { id: string | null }) {
     setChannel(KIND_TO_CHANNEL[link.kind] ?? "other");
     if (writing) writeDraft(draftKey, text);
     toast({ text: link.prefill ? "Текст подставлен — отправьте и вернитесь" : "Текст в буфере — вставьте в чат и отправьте" });
+    if (link.kind !== "phone") setAwaiting(true);
     window.open(link.href, "_blank", "noopener");
   }
 
@@ -222,10 +234,10 @@ export function ItemPanel({ id }: { id: string | null }) {
         </Button>
       </div>
     ) : firstContact && !rejecting ? (
-      <div className="grid grid-cols-[56px_56px_1fr] gap-2">
+      <div className="grid grid-cols-[48px_48px_minmax(0,1fr)] gap-2 sm:grid-cols-[56px_56px_minmax(0,1fr)]">
         <Button variant="danger" size="lg" className="px-0" aria-label="Отклонить" onClick={() => setRejecting(true)}><X className="h-6 w-6" /></Button>
         <Button variant="glass" size="lg" className="px-0" aria-label="Отложить на 3 дня" pending={busy} onClick={() => decide("snooze")}><Clock className="h-5 w-5" /></Button>
-        <Button variant="accent" size="lg" pending={busy} onClick={() => decide("approve")}><Check className="h-5 w-5" /> Взять в работу</Button>
+        <Button variant="accent" size="lg" className="px-3" pending={busy} onClick={() => decide("approve")}><Check className="h-5 w-5 max-[359px]:hidden" /> Взять в работу</Button>
       </div>
     ) : null
   ) : null;
@@ -242,6 +254,7 @@ export function ItemPanel({ id }: { id: string | null }) {
       {!data ? (item.error ? <Notice tone="error">{item.error}</Notice> : <Skeleton rows={3} />) : (
         <div className="space-y-5">
           {error ? <Notice tone="error">{error}</Notice> : null}
+          {returned && (writing || followUpMode) ? <Notice tone="ok">Вернулись из чата. Если сообщение ушло — нажмите «{followUpMode ? "Напомнил" : "Отправил"}» внизу, тогда напоминания пойдут по плану.</Notice> : null}
           {data.blocked ? <Notice tone="error">{data.blocked} Писать нельзя.</Notice> : null}
           {data.cardStatus !== "ready" ? <Notice tone="warn">Нет подтверждённого факта денег или хаоса — по стоп-правилу писать нельзя.</Notice> : null}
 
@@ -326,6 +339,11 @@ export function ItemPanel({ id }: { id: string | null }) {
                   <Button key={key} size="md" variant={key === "replied" || key === "won" ? "light" : key === "optout" ? "danger" : "glass"} pending={busy} onClick={() => setStatus(key)}>{STATUS_LABEL[key]}</Button>
                 ))}
               </div>
+              {["replied", "call", "estimate"].includes(data.status) && data.links.some((link) => link.kind === "phone") ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {data.links.filter((link) => link.kind === "phone").map((link) => <a key={link.href} href={link.href} className="glass inline-flex h-11 items-center gap-2 rounded-full px-4 text-[15px]"><Phone className="h-4 w-4 text-[var(--h-accent)]" /> {link.label}</a>)}
+                </div>
+              ) : null}
               {["replied", "call"].includes(data.status) ? <p className="mt-2 text-xs text-[var(--h-faint)]">«Смета» или «Сделка» сами создают карточку проекта с чек-листом и JSON.</p> : null}
             </section>
           ) : null}

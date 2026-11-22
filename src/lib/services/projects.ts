@@ -3,9 +3,10 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../db";
 import { ApiError } from "../errors";
-import { requestJson, safeDetail } from "../http";
-import { isPublicHttpUrl } from "../domain/website";
-import { PROJECT_STAGES, checklistFrom, isProjectStage, scenarioOf } from "../domain/scenarios";
+import { createHash, createHmac } from "node:crypto";
+import { requestJson } from "../http";
+import { assertPublicTarget } from "../net-guard";
+import { PROJECT_STAGES, checklistFrom, isProjectStage, scenarioOf, type ProjectStage } from "../domain/scenarios";
 import { isSegment, segmentInfo } from "../domain/segments";
 import type { ObservationCard } from "../domain/qualify";
 import { enqueueJob } from "../jobs/queue";
@@ -112,7 +113,7 @@ export const projectCreateSchema = z.object({
 });
 
 /** Создать проект. Из карточки охоты — один проект на карточку (повторный вызов вернёт существующий). */
-export async function createProject(tenantId: string, actorId: string | null, input: z.infer<typeof projectCreateSchema>, source = "manual") {
+export async function createProject(tenantId: string, actorId: string | null, input: z.infer<typeof projectCreateSchema>, source = "manual", stage: ProjectStage = "brief") {
   let organizationId: string | null = null;
   let scenarioId = input.scenarioId && isSegment(input.scenarioId) ? input.scenarioId : null;
   let title = input.title ?? null;
@@ -140,6 +141,7 @@ export async function createProject(tenantId: string, actorId: string | null, in
         outreachId: input.outreachId ?? null,
         scenarioId,
         title,
+        stage,
         product: input.product ?? scenario?.product ?? null,
         amount: input.amount ?? (scenario ? scenario.priceFrom : null),
         contactName: input.contactName ?? null,
@@ -229,15 +231,18 @@ export const projectPatchSchema = z.object({
 });
 
 export async function updateProject(tenantId: string, actorId: string, id: string, patch: z.infer<typeof projectPatchSchema>) {
-  const row = await prisma.project.findFirst({ where: { id, tenantId } });
-  if (!row) throw new ApiError(404, "Проект не найден", "not_found");
   if (patch.stage !== undefined && !isProjectStage(patch.stage)) throw new ApiError(400, "Такого этапа нет", "validation");
-  let checklist = checklistOf(row.checklist);
-  if (patch.toggle) checklist = checklist.map((item) => (item.id === patch.toggle ? { ...item, done: !item.done } : item));
-  if (patch.addItem) checklist = [...checklist, { id: `c${Date.now().toString(36)}`, title: patch.addItem, done: false }];
-  await prisma.project.update({
-    where: { id },
-    data: {
+  // Чек-лист — чтение и запись под блокировкой проекта: две быстрые отметки с двух устройств не затирают друг друга.
+  const row = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`project:${id}`}))`;
+    const current = await tx.project.findFirst({ where: { id, tenantId } });
+    if (!current) throw new ApiError(404, "Проект не найден", "not_found");
+    let checklist = checklistOf(current.checklist);
+    if (patch.toggle) checklist = checklist.map((item) => (item.id === patch.toggle ? { ...item, done: !item.done } : item));
+    if (patch.addItem) checklist = [...checklist, { id: `c${Date.now().toString(36)}`, title: patch.addItem, done: false }];
+    await tx.project.update({
+      where: { id },
+      data: {
       title: patch.title,
       product: patch.product,
       stage: patch.stage,
@@ -247,12 +252,15 @@ export async function updateProject(tenantId: string, actorId: string, id: strin
       contactValue: patch.contactValue,
       notes: patch.notes,
       checklist: checklist as unknown as Prisma.InputJsonValue,
-    },
+      },
+    });
+    return current;
   });
   if (patch.stage && patch.stage !== row.stage) {
     await activity({ tenantId, organizationId: row.organizationId, actorId, type: "project.stage", message: `Проект «${row.title}»: этап ${PROJECT_STAGES.find((item) => item.key === patch.stage)?.label}` });
   }
   await refreshSnapshot(id);
+  await queueWebhook(tenantId, id, "project.updated");
   return getProject(tenantId, id);
 }
 
@@ -267,7 +275,10 @@ export async function projectExport(tenantId: string, id: string) {
 async function queueWebhook(tenantId: string, projectId: string, event: string) {
   const settings = await getSettings(tenantId);
   if (!settings.hunt.projectWebhookUrl) return false;
-  await enqueueJob({ tenantId, type: "project.webhook", payload: { projectId, event }, idempotencyKey: `webhook:${projectId}:${event}:${Date.now()}` });
+  // Пачка правок подряд даёт одну отправку: задача ждёт 5 секунд и шлёт актуальный снимок.
+  const pending = await prisma.job.findFirst({ where: { tenantId, type: "project.webhook", status: "queued", payload: { path: ["projectId"], equals: projectId } }, select: { id: true } });
+  if (pending && event === "project.updated") return true;
+  await enqueueJob({ tenantId, type: "project.webhook", payload: { projectId, event }, delayMs: event === "project.updated" ? 5000 : 0, idempotencyKey: `webhook:${projectId}:${event}:${Date.now()}` });
   return true;
 }
 
@@ -278,26 +289,34 @@ export async function resendWebhook(tenantId: string, id: string) {
   return { queued: true };
 }
 
-export async function deliverWebhook(projectId: string, event: string) {
+/** Секрет подписи вебхука: стабилен для пространства, не хранится в базе, выводится из AUTH_SECRET. */
+export function webhookSecret(tenantId: string) {
+  return createHash("sha256").update(`${process.env.AUTH_SECRET ?? ""}:project-webhook:${tenantId}`).digest("hex");
+}
+
+export async function deliverWebhook(projectId: string, event: string, jobTenantId?: string) {
   const row = await prisma.project.findUnique({ where: { id: projectId }, include: projectInclude });
-  if (!row) return;
+  if (!row || (jobTenantId && row.tenantId !== jobTenantId)) return;
   const settings = await getSettings(row.tenantId);
   const target = settings.hunt.projectWebhookUrl;
   if (!target) return;
-  const checked = isPublicHttpUrl(target);
+  const checked = await assertPublicTarget(target);
   if (!checked.ok) {
     await prisma.project.update({ where: { id: projectId }, data: { webhookError: `Адрес отклонён: ${checked.reason}` } });
     return;
   }
-  const { response, body } = await requestJson(checked.url.toString(), {
+  const body = JSON.stringify({ event, sentAt: new Date().toISOString(), project: projectJson(row) });
+  const signature = createHmac("sha256", webhookSecret(row.tenantId)).update(body).digest("hex");
+  const { response } = await requestJson(checked.url.toString(), {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-LeadFlow-Event": event, "X-LeadFlow-Schema": PROJECT_SCHEMA },
-    body: JSON.stringify({ event, sentAt: new Date().toISOString(), project: projectJson(row) }),
+    headers: { "Content-Type": "application/json", "X-LeadFlow-Event": event, "X-LeadFlow-Schema": PROJECT_SCHEMA, "X-LeadFlow-Signature": `sha256=${signature}` },
+    body,
     redirect: "manual",
     timeoutMs: 20000,
   });
   if (!response.ok) {
-    const message = `Ответ ${response.status}${safeDetail(body) ? `: ${safeDetail(body)}` : ""}`;
+    // Тело ответа не сохраняем и не показываем: иначе вебхук превращается в способ читать чужие сервисы.
+    const message = response.status >= 300 && response.status < 400 ? `Приёмник ответил перенаправлением ${response.status} — укажите конечный адрес` : `Приёмник ответил ${response.status}`;
     await prisma.project.update({ where: { id: projectId }, data: { webhookError: message } });
     if (response.status >= 500 || response.status === 429) throw new Error(message);
     return;

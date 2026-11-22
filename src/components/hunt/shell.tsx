@@ -105,11 +105,11 @@ export function HuntShell({ user, children }: { user: HuntUser; children: ReactN
                       aria-current={on ? "page" : undefined}
                       className={cx(
                         "flex h-12 items-center justify-center gap-2 rounded-full transition-all duration-200",
-                        on ? "bg-[var(--h-text)] px-4 text-[#111]" : "w-12 text-[var(--h-muted)] hover:bg-white/10 hover:text-[var(--h-text)]",
+                        on ? "bg-[var(--h-text)] px-3.5 text-[#111] max-[359px]:w-12 max-[359px]:px-0" : "w-11 text-[var(--h-muted)] hover:bg-white/10 hover:text-[var(--h-text)] min-[360px]:w-12",
                       )}
                     >
                       <Icon className="h-[22px] w-[22px]" strokeWidth={on ? 2.2 : 1.8} />
-                      {on ? <span className="text-[15px] font-semibold">{tab.label}</span> : null}
+                      {on ? <span className="text-[15px] font-semibold max-[359px]:hidden">{tab.label}</span> : null}
                     </Link>
                   );
                 })}
@@ -117,18 +117,19 @@ export function HuntShell({ user, children }: { user: HuntUser; children: ReactN
               <button
                 aria-label="Новый поиск"
                 onClick={() => open("panel", "search")}
-                className="grid h-[60px] w-[60px] place-items-center rounded-full bg-[var(--h-accent)] text-[var(--h-accent-ink)] shadow-[0_10px_30px_rgba(255,214,10,0.35)] transition hover:brightness-105 active:scale-95"
+                className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-[var(--h-accent)] min-[360px]:h-[60px] min-[360px]:w-[60px] text-[var(--h-accent-ink)] shadow-[0_10px_30px_rgba(255,214,10,0.35)] transition hover:brightness-105 active:scale-95"
               >
                 <Plus className="h-7 w-7" strokeWidth={2.4} />
               </button>
             </div>
           </nav>
 
+          {/* Одна панель за раз: ссылка вида ?item=a&project=b откроет только первую по важности. */}
           <ItemPanel id={item} />
-          <ProjectPanel id={project} />
-          <ScenarioPanel id={scenario} />
-          <SearchPanel open={panel === "search"} />
-          <SettingsPanel open={panel === "settings"} />
+          <ProjectPanel id={item ? null : project} />
+          <ScenarioPanel id={item || project ? null : scenario} />
+          <SearchPanel open={!item && !project && !scenario && panel === "search"} />
+          <SettingsPanel open={!item && !project && !scenario && panel === "settings"} />
         </ToastProvider>
       </div>
     </HuntContext.Provider>
