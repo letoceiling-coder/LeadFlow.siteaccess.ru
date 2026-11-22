@@ -99,6 +99,7 @@ export default function HuntTodayPage() {
       </div>
 
       <div className="mt-3 space-y-3">
+        {data && !data.ai.ready ? <Notice tone="warn">AI-скоринг выключен: {data.ai.reason} Карточки собираются по данным источника — меньше фактов «денег», поэтому в ленту попадает меньше.</Notice> : null}
         {data?.queued ? <Notice><span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Скоринг идёт: {data.queued} карточек. Лента обновится сама.</span></Notice> : null}
         {data?.incomplete && tab === "new" ? <p className="px-1 text-xs text-[var(--h-faint)]">Неполных карточек от парсера: {data.incomplete} — без названия или контактов, в ленту не попадают.</p> : null}
         {data?.failed ? <Notice tone="warn"><span className="flex items-center justify-between gap-3">Не прошли скоринг: {data.failed}. <button onClick={retry} className="inline-flex items-center gap-1 font-semibold text-[var(--h-accent)]"><RotateCcw className="h-4 w-4" /> Повторить</button></span></Notice> : null}

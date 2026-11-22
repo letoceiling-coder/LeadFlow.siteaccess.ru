@@ -116,7 +116,7 @@ export async function autoQualifyNew(tenantId: string, organizationIds: string[]
   if (!organizationIds.length) return;
   const settings = await getSettings(tenantId);
   if (!settings.hunt.autoQualify || settings.hunt.autoQualifyMax <= 0) return;
-  if (!(await isReady(tenantId, "openrouter"))) return;
+  // Без AI карточка всё равно собирается по данным источника — конвейер не должен вставать из-за OpenRouter.
   const active = new Set<string>(settings.hunt.activeSegments);
   const orgs = await prisma.organization.findMany({
     where: { tenantId, id: { in: organizationIds }, isDemo: false, outreach: null, optOut: null },
@@ -168,6 +168,12 @@ export async function runQualify(organizationId: string) {
       if (error instanceof ApiError && error.code === "ai_invalid_json") {
         billed = true; // вызов был, просто ответ не разобрался — фиксируем расход как неизвестный
         aiNote = "AI вернул неразборчивый ответ — карточка собрана только из данных источника.";
+      } else if (error instanceof ApiError && ["network", "timeout"].includes(error.code)) {
+        // Нет связи с OpenRouter (обычно умер прокси). Не стопорим конвейер: карточка по данным, стоп-правило действует.
+        // Интеграция помечается ошибкой — следующие карточки не ждут таймаута, а в ленте видно предупреждение.
+        await prisma.integration.updateMany({ where: { tenantId, provider: "openrouter" }, data: { status: "error", lastError: "Нет связи с OpenRouter: прокси не отвечает. Проверьте OPENROUTER_PROXY_URL и нажмите «Проверить» в интеграциях.", lastCheckedAt: new Date() } });
+        aiNote = "AI недоступен (нет связи с OpenRouter) — карточка собрана по данным источника. Перезапустите скоринг, когда связь вернётся.";
+        model = null;
       } else throw error;
     }
   } else {
@@ -271,6 +277,8 @@ export async function today(tenantId: string, limit = 20) {
     prisma.outreach.count({ where: { tenantId, cardStatus: "incomplete" } }),
   ]);
   const blocked = await suppressedOrgIds(tenantId, rows);
+  const ai = await prisma.integration.findUnique({ where: { tenantId_provider: { tenantId, provider: "openrouter" } }, select: { status: true, lastError: true } });
+  const aiReady = await isReady(tenantId, "openrouter");
   return {
     items: rows.filter((row) => !blocked.has(row.organizationId)).map((row) => publicItem(row, end)),
     total,
@@ -279,6 +287,7 @@ export async function today(tenantId: string, limit = 20) {
     queued,
     failed,
     incomplete,
+    ai: { ready: aiReady, reason: aiReady ? null : ai?.lastError ?? "OpenRouter не подключён — скоринг идёт только по данным источника." },
     sentToday: sent,
     dailyLimit: settings.hunt.dailyLimit,
     activeSegments: settings.hunt.activeSegments,

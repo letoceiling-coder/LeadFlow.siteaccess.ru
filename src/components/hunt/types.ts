@@ -42,6 +42,7 @@ export type Today = {
   queued: number;
   failed: number;
   incomplete: number;
+  ai: { ready: boolean; reason: string | null };
   sentToday: number;
   dailyLimit: number;
   activeSegments: string[];
