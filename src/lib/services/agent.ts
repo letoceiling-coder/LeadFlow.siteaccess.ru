@@ -469,7 +469,7 @@ export async function runAgentTurn(threadId: string) {
       await touch(threadId);
       const result = await completeTools({
         baseUrl: String(integration.config.baseUrl),
-        apiKey: integration.secrets.apiKey,
+        apiKey: integration.secrets.apiKey, secrets: integration.secrets,
         model,
         messages,
         tools: TOOLS,

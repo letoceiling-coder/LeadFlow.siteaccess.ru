@@ -12,7 +12,7 @@ type Integration = { id: string; name: string; description: string; instructions
 const FIELDS: Record<string, { key: string; label: string; secret?: boolean; config?: boolean }[]> = {
   parser: [{ key: "apiKey", label: "Ключ", secret: true }],
   studio: [{ key: "apiKey", label: "Ключ", secret: true }],
-  openrouter: [{ key: "apiKey", label: "Ключ", secret: true }],
+  openrouter: [{ key: "apiKey", label: "Ключ", secret: true }, { key: "proxyUrl", label: "Прокси http://логин:пароль@хост:порт (или direct)", secret: true }],
   email: [{ key: "host", label: "SMTP-хост", secret: true }, { key: "port", label: "Порт", secret: true }, { key: "user", label: "Логин", secret: true }, { key: "password", label: "Пароль", secret: true }, { key: "from", label: "Отправитель", secret: true }],
   telegram: [{ key: "botToken", label: "Токен бота", secret: true }, { key: "chatId", label: "Chat id команды", secret: true }],
   whatsapp: [{ key: "token", label: "Токен", secret: true }, { key: "phoneNumberId", label: "Phone Number ID", secret: true }, { key: "templateName", label: "Имя шаблона", config: true }],

@@ -40,9 +40,10 @@ export async function testIntegration(integration: ResolvedIntegration): Promise
     const models = await requestJson(`${base}/models`, {
       headers: { Authorization: `Bearer ${integration.secrets.apiKey}` },
       timeoutMs: 20000,
-      proxy: openRouterProxy(),
+      proxy: openRouterProxy(integration.secrets),
     });
     if (models.response.status === 401) throw new ApiError(401, "Ключ OpenRouter отклонён.", "openrouter_unauthorized");
+    if (models.response.status === 403) throw new ApiError(403, "OpenRouter не пускает с этого адреса (403). Укажите рабочий прокси.", "openrouter_region");
     if (!models.response.ok) throw new ApiError(502, "OpenRouter не подтвердил ключ.", "openrouter_check_failed");
     return { scopes: ["chat"], detail: "Ключ принят. Баланс и точная стоимость станут известны после вызова, если сервис их вернёт." };
   }

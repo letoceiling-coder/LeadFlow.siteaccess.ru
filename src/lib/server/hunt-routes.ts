@@ -31,6 +31,7 @@ import {
 import { webhookSecret, createProject, getProject, listProjects, projectCreateSchema, projectExport, projectPatchSchema, resendWebhook, updateProject } from "../services/projects";
 import { queueFullSync, sheetStatus } from "../services/sheets";
 import { systemHealth } from "../services/health";
+import { aiStatus, aiUpdateSchema, updateAi } from "../services/ai-settings";
 
 function allow(session: AppSession, permission: string) {
   if (!can(session.role, permission)) throw new ApiError(403, "Недостаточно прав для этого действия", "forbidden");
@@ -75,6 +76,14 @@ export async function huntRoutes(request: Request, session: AppSession, path: st
   if (section === "searches" && method === "GET") {
     allow(session, "org.read");
     return json(await searches(tenantId));
+  }
+  if (section === "ai" && !id && method === "GET") {
+    allow(session, "integrations.manage");
+    return json(await aiStatus(tenantId));
+  }
+  if (section === "ai" && id === "update" && method === "POST") {
+    allow(session, "integrations.manage");
+    return json(await updateAi(tenantId, session.userId, aiUpdateSchema.parse(await readJson(request))));
   }
   if (section === "health" && method === "GET") {
     allow(session, "org.read");

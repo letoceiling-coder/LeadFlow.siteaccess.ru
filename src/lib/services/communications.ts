@@ -58,7 +58,7 @@ export async function draftMessage(tenantId: string, userId: string, input: { or
     const model = resolveTaskModel("message", settings.ai.messageModel);
     const result = await completeJson({
       baseUrl: String(integration.config.baseUrl),
-      apiKey: integration.secrets.apiKey,
+      apiKey: integration.secrets.apiKey, secrets: integration.secrets,
       model,
       maxTokens: 500,
       schema: z.object({ text: z.string().min(20).max(1200) }),

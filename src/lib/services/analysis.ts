@@ -93,7 +93,7 @@ export async function runAnalysis(reportId: string) {
   try {
     const result = await completeJson({
       baseUrl: String(integration.config.baseUrl),
-      apiKey: integration.secrets.apiKey,
+      apiKey: integration.secrets.apiKey, secrets: integration.secrets,
       model,
       system: prompt.system,
       user: prompt.user,

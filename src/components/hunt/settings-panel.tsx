@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Copy, ExternalLink, Minus, Plus, RefreshCw, Sheet as SheetIcon } from "lucide-react";
+import { Copy, Cpu, ExternalLink, Minus, Plus, RefreshCw, Sheet as SheetIcon } from "lucide-react";
 import { appsScript } from "@/lib/domain/apps-script";
 import { useHunt } from "./shell";
 import { post, useLive } from "./data";
@@ -9,6 +9,8 @@ import { Button, Chip, Field, Glass, Notice, Sheet, Skeleton, cx, errorText, inp
 import { dayLabel, type HuntSettings, type SheetStatus } from "./types";
 
 type Segment = { id: string; label: string; contour: string };
+type AiStatus = { configured: boolean; status: string; lastError: string | null; lastCheckedAt: string | null; proxy: { source: "admin" | "env" | "default" | "direct"; host: string | null }; hasKey: boolean; pendingRescore: number };
+const PROXY_SOURCE: Record<string, string> = { admin: "введён здесь", env: "из .env сервера", default: "запасной из кода", direct: "без прокси" };
 
 const ZONES = [
   { key: "Europe/Kaliningrad", label: "Калининград" },
@@ -40,6 +42,27 @@ export function SettingsPanel({ open }: { open: boolean }) {
   const [sheetUrl, setSheetUrl] = useState("");
   const [projectWebhook, setProjectWebhook] = useState("");
   const hunt = settings.data?.hunt;
+  const ai = useLive<AiStatus>(open && admin ? "/api/hunt/ai" : null, version);
+  const [proxyUrl, setProxyUrl] = useState("");
+  const [aiKey, setAiKey] = useState("");
+
+  async function updateAi() {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await post<{ detail: string; rescored: number }>("/api/hunt/ai/update", { proxyUrl: proxyUrl.trim() || undefined, apiKey: aiKey.trim() || undefined, rescore: true });
+      setProxyUrl("");
+      setAiKey("");
+      await ai.reload();
+      refresh();
+      toast({ text: result.rescored ? `AI работает. Пересчитываем ${result.rescored} карточек` : "AI работает" });
+    } catch (reason) {
+      setError(errorText(reason));
+      await ai.reload();
+    } finally {
+      setBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (hunt) { setSheetUrl(hunt.sheetUrl); setProjectWebhook(hunt.projectWebhookUrl); }
@@ -104,6 +127,32 @@ export function SettingsPanel({ open }: { open: boolean }) {
       <div className="space-y-7">
         {error ? <Notice tone="error">{error}</Notice> : null}
 
+        {admin ? (
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Cpu className="h-5 w-5 text-[var(--h-accent)]" />
+              <h3 className="text-lg font-semibold">AI-скоринг (OpenRouter)</h3>
+              {ai.data ? <span className={cx("ml-auto rounded-full px-2.5 py-1 text-xs font-medium", ai.data.status === "connected" ? "bg-[rgba(59,224,138,0.14)] text-[#8ff0bd]" : "bg-[rgba(255,100,100,0.15)] text-[#ff9b9b]")}>{ai.data.status === "connected" ? "работает" : "нет связи"}</span> : null}
+            </div>
+            {ai.data ? (
+              <Glass className="space-y-1 p-4 text-sm">
+                <p>Прокси: <b>{ai.data.proxy.host ?? "—"}</b> <span className="text-[var(--h-muted)]">· {PROXY_SOURCE[ai.data.proxy.source]}</span></p>
+                <p className="text-[var(--h-muted)]">Ключ: {ai.data.hasKey ? "есть" : "не задан"}{ai.data.lastCheckedAt ? ` · проверка ${dayLabel(ai.data.lastCheckedAt)}` : ""}</p>
+                {ai.data.status !== "connected" && ai.data.lastError ? <p className="text-[#ffb3b3]">{ai.data.lastError}</p> : null}
+                {ai.data.pendingRescore ? <p className="text-[var(--h-muted)]">Карточек, оценённых без AI: {ai.data.pendingRescore} — пересчитаются после «Обновить».</p> : null}
+              </Glass>
+            ) : <Skeleton rows={1} />}
+            <Field label="Прокси" hint="http://логин:пароль@хост:порт — нужен, потому что с сервера OpenRouter отвечает 403. Хранится зашифрованным и не показывается.">
+              <input className={inputClass} value={proxyUrl} onChange={(event) => setProxyUrl(event.target.value)} placeholder="http://user:pass@1.2.3.4:8888" autoComplete="off" spellCheck={false} />
+            </Field>
+            <Field label="Ключ OpenRouter (если нужно заменить)">
+              <input className={inputClass} type="password" value={aiKey} onChange={(event) => setAiKey(event.target.value)} placeholder="sk-or-…" autoComplete="off" />
+            </Field>
+            <Button variant="accent" size="lg" className="w-full" pending={busy} onClick={updateAi}><RefreshCw className="h-5 w-5" /> Обновить</Button>
+            <p className="text-xs text-[var(--h-faint)]">«Обновить» сохраняет введённое, проверяет связь с OpenRouter и, если всё хорошо, пересчитывает карточки. Пустые поля — просто повторная проверка.</p>
+          </section>
+        ) : null}
+
         {admin ? (!hunt ? <Skeleton rows={2} /> : (
           <>
             <section>
@@ -154,6 +203,7 @@ export function SettingsPanel({ open }: { open: boolean }) {
             </section>
           </>
         )) : null}
+
 
         <section className="space-y-3">
           <div className="flex items-center gap-2">

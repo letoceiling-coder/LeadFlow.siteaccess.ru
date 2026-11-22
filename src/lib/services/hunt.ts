@@ -167,7 +167,7 @@ export async function runQualify(organizationId: string, jobTenantId?: string) {
     model = resolveTaskModel("analysis", settings.ai.qualifyModel || process.env.AI_DEFAULT_MODEL);
     const prompt = buildQualifyPrompt(facts);
     try {
-      const result = await completeJson({ baseUrl: String(integration.config.baseUrl), apiKey: integration.secrets.apiKey, model, system: prompt.system, user: prompt.user, schema: qualifyResultSchema, maxTokens: 1200 });
+      const result = await completeJson({ baseUrl: String(integration.config.baseUrl), apiKey: integration.secrets.apiKey, secrets: integration.secrets, model, system: prompt.system, user: prompt.user, schema: qualifyResultSchema, maxTokens: 1200 });
       ai = result.data;
       cost = typeof result.usage.cost === "number" ? result.usage.cost : null;
       billed = true;
@@ -471,7 +471,7 @@ export async function rewritePitch(tenantId: string, id: string) {
     "Используй только факты из карточки (money, chaos, observation). Верни JSON {\"text\": \"...\"}.",
   ].join(" ");
   const user = JSON.stringify({ organization: row.organization.name, city: row.organization.city, facts: { money: card.money, chaos: card.chaos, observation: card.observation }, draft });
-  const result = await completeJson({ baseUrl: String(integration.config.baseUrl), apiKey: integration.secrets.apiKey, model, system, user, schema: rewriteSchema, maxTokens: 700 });
+  const result = await completeJson({ baseUrl: String(integration.config.baseUrl), apiKey: integration.secrets.apiKey, secrets: integration.secrets, model, system, user, schema: rewriteSchema, maxTokens: 700 });
   const cost = typeof result.usage.cost === "number" ? result.usage.cost : null;
   await recordCost({ tenantId, provider: "openrouter", operation: "pitch", amountUsd: cost, organizationId: row.organizationId, refType: "outreach", refId: id });
   const text = result.data.text.trim();

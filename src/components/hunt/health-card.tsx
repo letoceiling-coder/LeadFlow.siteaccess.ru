@@ -47,7 +47,7 @@ export function HealthStrip() {
 }
 
 export function HealthCard() {
-  const { user, refresh } = useHunt();
+  const { user, refresh, open } = useHunt();
   const toast = useToast();
   const health = useHealth();
   const [busy, setBusy] = useState(false);
@@ -88,7 +88,8 @@ export function HealthCard() {
               <div className="text-[15px]">{item.label}</div>
               <div className="break-words text-xs text-[var(--h-muted)]">{item.detail}</div>
             </div>
-            {admin && !item.ok && ["ai", "parser"].includes(item.key) ? <Button size="sm" pending={busy} onClick={() => check(item.key === "ai" ? "openrouter" : "parser")}>Проверить</Button> : null}
+            {admin && !item.ok && item.key === "ai" ? <Button size="sm" onClick={() => open("panel", "settings")}>Настроить</Button> : null}
+            {admin && !item.ok && item.key === "parser" ? <Button size="sm" pending={busy} onClick={() => check("parser")}>Проверить</Button> : null}
           </li>
         ))}
       </ul>

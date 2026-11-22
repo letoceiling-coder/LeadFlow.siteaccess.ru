@@ -4,10 +4,30 @@ import { ApiError, RetryableError } from "../errors";
 import { requestJson, retryAfterMs, safeDetail } from "../http";
 import { DEFAULT_OPENROUTER_PROXY } from "./catalog";
 
-export function openRouterProxy(): string | undefined {
+/**
+ * Прокси для OpenRouter (с сервера в РФ напрямую OpenRouter отвечает 403).
+ * Порядок: прокси из интеграции (вводится в админке, хранится зашифрованным) → OPENROUTER_PROXY_URL → запасной.
+ * Значение "direct" — без прокси.
+ */
+export function openRouterProxy(secrets?: Record<string, string> | null): string | undefined {
+  const fromIntegration = secrets?.proxyUrl?.trim();
+  if (fromIntegration) return fromIntegration === "direct" ? undefined : fromIntegration;
   const raw = process.env.OPENROUTER_PROXY_URL;
   if (raw !== undefined && raw.trim() === "direct") return undefined;
   return raw?.trim() || DEFAULT_OPENROUTER_PROXY;
+}
+
+/** Прокси вводит человек: только http(s)://[логин:пароль@]хост:порт или "direct". */
+export function validProxy(value: string): string | null {
+  const clean = value.trim();
+  if (clean === "direct") return clean;
+  try {
+    const url = new URL(clean);
+    if (!["http:", "https:"].includes(url.protocol) || !url.hostname || !url.port) return null;
+    return clean;
+  } catch {
+    return null;
+  }
 }
 
 export const analysisResultSchema = z.object({
@@ -40,6 +60,8 @@ export async function completeJson(options: {
   user: string;
   schema: z.ZodTypeAny;
   maxTokens: number;
+  /** Секреты интеграции: из них берётся прокси, введённый в админке. */
+  secrets?: Record<string, string>;
 }) {
   if (!options.model.trim()) {
     throw new ApiError(422, "Модель AI не выбрана. Укажите её в настройках.", "model_required");
@@ -48,7 +70,7 @@ export async function completeJson(options: {
     const { response, body } = await requestJson(`${options.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       timeoutMs: 60000,
-      proxy: openRouterProxy(),
+      proxy: openRouterProxy(options.secrets),
       headers: {
         Authorization: `Bearer ${options.apiKey}`,
         "Content-Type": "application/json",
@@ -119,11 +141,12 @@ export async function completeTools(options: {
   model: string;
   messages: ChatMessage[];
   tools: { name: string; description: string; parameters: Record<string, unknown> }[];
+  secrets?: Record<string, string>;
 }) {
   const { response, body } = await requestJson(`${options.baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     timeoutMs: 90000,
-    proxy: openRouterProxy(),
+    proxy: openRouterProxy(options.secrets),
     headers: {
       Authorization: `Bearer ${options.apiKey}`,
       "Content-Type": "application/json",

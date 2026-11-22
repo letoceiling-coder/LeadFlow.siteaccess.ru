@@ -7,6 +7,25 @@ import { dayBounds } from "../src/lib/domain/time";
 import { isPrivateIp } from "../src/lib/domain/ip";
 import { sheetSafe } from "../src/lib/domain/sheet-safe";
 import { appsScript } from "../src/lib/domain/apps-script";
+import { openRouterProxy, validProxy } from "../src/lib/integrations/openrouter";
+
+describe("прокси OpenRouter из админки", () => {
+  it("формат проверяется, пароль допускается, мусор — нет", () => {
+    expect(validProxy("http://user:pa55@1.2.3.4:8888")).toBe("http://user:pa55@1.2.3.4:8888");
+    expect(validProxy("direct")).toBe("direct");
+    expect(validProxy("1.2.3.4:8888")).toBeNull();
+    expect(validProxy("socks5://1.2.3.4:1080")).toBeNull();
+    expect(validProxy("http://1.2.3.4")).toBeNull();
+  });
+  it("прокси из админки главнее .env, direct выключает прокси", () => {
+    const before = process.env.OPENROUTER_PROXY_URL;
+    process.env.OPENROUTER_PROXY_URL = "http://env:1@9.9.9.9:8888";
+    expect(openRouterProxy({ proxyUrl: "http://a:b@1.1.1.1:3128" })).toBe("http://a:b@1.1.1.1:3128");
+    expect(openRouterProxy({ proxyUrl: "direct" })).toBeUndefined();
+    expect(openRouterProxy({})).toBe("http://env:1@9.9.9.9:8888");
+    process.env.OPENROUTER_PROXY_URL = before;
+  });
+});
 
 describe("безопасность исходящих данных", () => {
   it("внутренние адреса не проходят, публичные проходят", () => {
