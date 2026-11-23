@@ -37,7 +37,7 @@ export default function DashboardPage() {
     <div>
       <PageTitle title="Обзор" text="Здесь только цифры из вашей базы. Демонстрационные карточки в показатели не входят." />
       {!data.workerOnline ? <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Фоновый обработчик не запущен. Поиск можно создать, но долгие задачи AI и сайтов ждут команду npm run worker или контейнер worker.</div> : null}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {CARDS.map((card) => <Card key={card.key}><div className="text-2xl font-semibold">{data.cards[card.key] ?? 0}</div><div className="mt-1 text-sm text-slate-500">{card.label}</div></Card>)}
       </div>
       {empty ? <div className="mt-5"><State title="База ещё пустая" text="Подключите Parser API и запустите поиск или включите явно помеченные примеры в настройках. Примеры не считаются реальными клиентами." action={<Link className="text-sm text-teal-800" href="/search">Перейти к поиску</Link>} /></div> : null}

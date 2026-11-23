@@ -85,7 +85,7 @@ export function HuntShell({ user, children }: { user: HuntUser; children: ReactN
               </Link>
               <div className="flex-1" />
               <IconButton label="Настройки охоты" onClick={() => open("panel", "settings")}><Settings2 className="h-5 w-5" /></IconButton>
-              <IconButton label="Полная версия LeadFlow" onClick={() => router.push("/")}><LayoutGrid className="h-5 w-5" /></IconButton>
+              <IconButton label="Полная версия LeadFlow" onClick={() => router.push("/overview")}><LayoutGrid className="h-5 w-5" /></IconButton>
             </div>
           </header>
 

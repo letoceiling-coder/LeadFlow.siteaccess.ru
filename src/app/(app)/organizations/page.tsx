@@ -57,6 +57,7 @@ function Organizations() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [manual, setManual] = useState(false);
+  const [moreFilters, setMoreFilters] = useState(false);
   function update(patch: Record<string, string>, resetPage = true) {
     const next = new URLSearchParams(params);
     for (const [key, value] of Object.entries(patch)) {
@@ -137,7 +138,8 @@ function Organizations() {
       ) : null}
       <Card className="mb-4">
         <form
-          className="grid gap-3 md:grid-cols-4"
+          className="lf-filters grid gap-3 md:grid-cols-4"
+          data-open={moreFilters ? "true" : "false"}
           onSubmit={(event) => {
             event.preventDefault();
             const form = new FormData(event.currentTarget);
@@ -193,6 +195,7 @@ function Organizations() {
           </Field>
           <label className="flex items-end gap-2 pb-2 text-sm"><input type="checkbox" name="includeDemo" /> Показать примеры</label>
           <div className="flex items-end gap-2">
+            <Button type="button" variant="secondary" className="md:hidden" onClick={() => setMoreFilters((value) => !value)}>{moreFilters ? "Скрыть фильтры" : "Все фильтры"}</Button>
             <Button type="submit">Применить</Button>
             <a className="rounded-lg border border-line px-3 py-2 text-sm" href={`/api/organizations/export?${params.toString()}`}>CSV</a>
           </div>
@@ -214,7 +217,7 @@ function Organizations() {
         </div>
       ) : null}
       {list.loading ? <Loading /> : list.error ? <State title="База недоступна" text={list.error} /> : (list.data?.items.length ?? 0) === 0 ? <State title="Организаций нет" text="Запустите поиск, синхронизируйте уже собранную базу парсера или добавьте карточку вручную." action={<Link className="text-teal-800" href="/search">Открыть поиск</Link>} /> : (
-        <div className="overflow-hidden rounded-2xl border border-line bg-white">
+        <div className="overflow-x-auto rounded-2xl border border-line bg-white">
           <table className="w-full table-fixed text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
               <tr>

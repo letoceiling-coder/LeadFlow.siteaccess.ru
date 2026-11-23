@@ -24,7 +24,7 @@ export default function RegisterPage() {
           workspaceName: formData.get("workspaceName"),
         }),
       });
-      router.replace("/");
+      router.replace("/hunt");
       router.refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось создать пространство");
@@ -34,7 +34,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <main className="grid min-h-screen place-items-center px-4">
+    <main className="hunt hunt-glow lf-dark grid min-h-[100dvh] place-items-center px-4">
       <form action={submit} className="w-full max-w-md rounded-2xl border border-line bg-white p-6 shadow-card">
         <h1 className="text-xl font-semibold">Новое рабочее пространство</h1>
         <p className="mb-5 mt-1 text-sm text-slate-500">Первый пользователь становится владельцем. Данные других команд сюда не попадают.</p>

@@ -17,7 +17,7 @@ export default function InvitePage() {
     setError("");
     try {
       await api("/api/team/invitations/accept", { method: "POST", body: JSON.stringify({ token: params.token }) });
-      router.replace("/");
+      router.replace("/hunt");
       router.refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Приглашение не принято");
@@ -26,7 +26,7 @@ export default function InvitePage() {
   }
 
   return (
-    <main className="grid min-h-screen place-items-center bg-mist px-4">
+    <main className="hunt hunt-glow lf-dark grid min-h-[100dvh] place-items-center px-4">
       <Card className="w-full max-w-md">
         <h1 className="text-xl font-semibold">Приглашение в пространство</h1>
         <p className="mt-2 text-sm text-slate-600">Принять его может только вошедший пользователь с тем же email, на который отправлено приглашение. Код одноразовый.</p>

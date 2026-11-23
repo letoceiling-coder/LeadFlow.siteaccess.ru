@@ -101,3 +101,57 @@ a { color: inherit; }
 .anim-toast { animation: toast-in 180ms ease-out; }
 @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
 .skeleton { background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.09), rgba(255,255,255,0.04)); background-size: 200% 100%; animation: shimmer 1.4s infinite linear; }
+
+/* ───────────── Полная версия (админка, вход) в той же теме, что «Охота» ─────────────
+   Старые страницы написаны светлыми классами Tailwind. Внутри .lf-dark они получают цвета из палитры «Охоты»:
+   белые карточки → стекло, серый текст → приглушённый, бирюзовый акцент → жёлтый. Специфичность выше утилит, !important не нужен. */
+.lf-dark { color: var(--h-text); }
+.lf-dark .bg-white, .lf-dark .bg-white\/90 {
+  background: var(--h-glass);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  backdrop-filter: blur(20px) saturate(140%);
+}
+.lf-dark .bg-slate-50, .lf-dark .bg-mist { background: rgba(255, 255, 255, 0.035); }
+.lf-dark .bg-slate-100 { background: rgba(255, 255, 255, 0.08); }
+.lf-dark .bg-slate-900, .lf-dark .bg-slate-950 { background: rgba(12, 12, 14, 0.82); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); }
+.lf-dark .hover\:bg-slate-50:hover, .lf-dark .hover\:bg-slate-100:hover { background: rgba(255, 255, 255, 0.07); }
+.lf-dark .border-line, .lf-dark .divide-line > * + * { border-color: var(--h-line); }
+.lf-dark .shadow-card { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05); }
+.lf-dark .text-ink, .lf-dark .text-slate-700, .lf-dark .text-slate-200 { color: var(--h-text); }
+.lf-dark .text-slate-500, .lf-dark .text-slate-600, .lf-dark .text-slate-300 { color: var(--h-muted); }
+.lf-dark .text-slate-400 { color: var(--h-faint); }
+.lf-dark .text-teal-800 { color: var(--h-accent); }
+.lf-dark .bg-teal-700 { background: var(--h-accent); color: var(--h-accent-ink); }
+.lf-dark .hover\:bg-teal-800:hover { background: #ffe14d; }
+.lf-dark .bg-teal-50 { background: rgba(255, 214, 10, 0.12); color: var(--h-accent); }
+.lf-dark .border-teal-700 { border-color: var(--h-accent); }
+.lf-dark .ring-teal-700\/30 { --tw-ring-color: rgba(255, 214, 10, 0.35); }
+.lf-dark .text-red-700, .lf-dark .text-red-800 { color: #ff9b9b; }
+.lf-dark .bg-red-50 { background: rgba(255, 100, 100, 0.12); }
+.lf-dark .bg-amber-50 { background: rgba(255, 107, 44, 0.11); }
+.lf-dark .border-amber-200 { border-color: rgba(255, 107, 44, 0.3); }
+.lf-dark .text-amber-800, .lf-dark .text-amber-900 { color: #ffc3a6; }
+.lf-dark .bg-emerald-50 { background: rgba(59, 224, 138, 0.1); }
+.lf-dark .text-emerald-800 { color: #8ff0bd; }
+.lf-dark input, .lf-dark select, .lf-dark textarea { color: var(--h-text); }
+.lf-dark input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), .lf-dark select, .lf-dark textarea {
+  background-color: rgba(255, 255, 255, 0.045);
+  border-color: var(--h-line);
+}
+.lf-dark input:focus, .lf-dark select:focus, .lf-dark textarea:focus { border-color: var(--h-accent); }
+.lf-dark select option { background: #17171b; color: var(--h-text); }
+.lf-dark ::placeholder { color: var(--h-faint); }
+.lf-dark thead { color: var(--h-faint); }
+.lf-dark table tr { border-color: var(--h-line); }
+.lf-dark a:focus-visible, .lf-dark button:focus-visible { outline: 2px solid var(--h-accent); outline-offset: 2px; }
+/* iPhone увеличивает страницу при фокусе на поле с шрифтом меньше 16px. */
+@media (max-width: 639px) {
+  .lf-dark input, .lf-dark select, .lf-dark textarea { font-size: 16px; }
+  /* База организаций: на телефоне видны поиск и город, остальные фильтры — по кнопке «Все фильтры». */
+  .lf-filters:not([data-open="true"]) > label:nth-of-type(n+3) { display: none; }
+}
+/* Таблицы полной версии на телефоне: не сжимать в кашу, а прокручивать вбок внутри своей карточки. */
+@media (max-width: 767px) {
+  .lf-dark .overflow-x-auto > table { min-width: 720px; }
+}
+.lf-dark input[type="checkbox"], .lf-dark input[type="radio"] { accent-color: var(--h-accent); }

@@ -16,7 +16,7 @@ export default function LoginPage() {
     setError("");
     try {
       await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email: formData.get("email"), password: formData.get("password") }) });
-      router.replace("/");
+      router.replace("/hunt");
       router.refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось войти");
@@ -26,7 +26,7 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="grid min-h-screen place-items-center px-4">
+    <main className="hunt hunt-glow lf-dark grid min-h-[100dvh] place-items-center px-4">
       <form action={submit} className="w-full max-w-md rounded-2xl border border-line bg-white p-6 shadow-card">
         <div className="mb-6 flex items-center gap-3">
           <div className="grid h-10 w-10 place-items-center rounded-lg bg-teal-700 font-bold text-white">LF</div>
