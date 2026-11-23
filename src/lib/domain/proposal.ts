@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ObservationCard } from "./qualify";
+import { plural, type ObservationCard } from "./qualify";
 import { scenarioOf, type Scenario } from "./scenarios";
 import type { SiteScan } from "./site-scan";
 
@@ -72,12 +72,12 @@ export function buildProposal(input: {
     ...(input.card?.money ?? []).map((item) => item.text),
   ].filter((text, index, list) => list.indexOf(text) === index).slice(0, 5);
   const product = scenario?.product ?? GENERIC.product;
-  const reviews = input.reviewCount && input.reviewCount >= 20 ? ` У вас ${input.reviewCount} отзывов${input.rating ? ` и рейтинг ${input.rating.toFixed(1)}` : ""} — клиенты вас уже выбирают, осталось не терять их на этапе заявки.` : "";
+  const reviews = input.reviewCount && input.reviewCount >= 20 ? ` У вас ${input.reviewCount} ${plural(input.reviewCount, "отзыв", "отзыва", "отзывов")}${input.rating ? ` и рейтинг ${input.rating.toFixed(1)}` : ""} — клиенты вас уже выбирают, осталось не терять их на этапе заявки.` : "";
   return {
     version: 1,
     title: `${product} для «${input.name}»`,
     business: { name: input.name, city: input.city, category: input.category, rating: input.rating, reviewCount: input.reviewCount },
-    intro: `Посмотрели, как сейчас устроены заявки у «${input.name}»${input.city ? ` в ${input.city}` : ""}, и собрали предложение под вашу нишу.${reviews}`,
+    intro: `Посмотрели, как сейчас устроены заявки у «${input.name}»${input.city ? ` (${input.city})` : ""}, и собрали предложение под вашу нишу.${reviews}`,
     seen,
     pain: base.pain,
     product,

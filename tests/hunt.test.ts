@@ -149,7 +149,7 @@ describe("карточка наблюдения и скоринг", () => {
   it("без AI собирает факты из данных: 146 отзывов и нет сайта", () => {
     const card = buildCard(base, null);
     expect(card.segment).toBe("A1");
-    expect(card.money.map((item) => item.text)).toContain("146 отзывов");
+    expect(card.money.map((item) => item.text)).toContain("146 отзывов на картах");
     expect(card.chaos[0].source).toBe("websiteStatus");
     expect(card.caseRef).toBe("Доставка, Ростов");
     const scored = strategyScore(card, null);
