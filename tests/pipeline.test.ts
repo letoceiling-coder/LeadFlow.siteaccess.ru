@@ -204,3 +204,21 @@ describe("ошибки прокси понятны человеку", () => {
     server.close();
   });
 });
+
+import { cleanSiteUrl, isNotASite, siteKey } from "../src/lib/domain/site-scan";
+
+describe("ссылка на сайт из карточки", () => {
+  it("рекламные метки erid и utm убираются", () => {
+    expect(cleanSiteUrl("https://newkrd.prosushi.ru/menu/rolly-i-sushi?type=rolly-klassicheskie&erid=3MtFQRkqfB2huzBcHHtt6htyH9jP3U")).toBe("https://newkrd.prosushi.ru/menu/rolly-i-sushi?type=rolly-klassicheskie");
+    expect(cleanSiteUrl("https://prosushi.ru/?utm_campaign=krd&utm_source=Yandex_map")).toBe("https://prosushi.ru/");
+  });
+  it("соцсети и площадки не сканируются как сайт", () => {
+    expect(isNotASite("https://www.avito.ru/x?utm_campaign=n")).toBe(true);
+    expect(isNotASite("https://wa.me/79777122021")).toBe(true);
+    expect(isNotASite("https://www.youtube.com/watch?v=1")).toBe(true);
+    expect(isNotASite("https://garagesao.ru/uslugi/")).toBe(false);
+  });
+  it("точки сети с разными utm — один сайт", () => {
+    expect(siteKey("https://prosushi.ru/?utm_content=stavropolskaya")).toBe(siteKey("https://www.prosushi.ru/?utm_content=yubilejnyj"));
+  });
+});

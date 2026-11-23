@@ -5,16 +5,19 @@ import { ApiError, RetryableError } from "../errors";
 import { ParserClient } from "../integrations/parser";
 import { isReady, requireReady } from "../integrations/config";
 import { logEvent } from "../log";
-import { failedScan, isDeadSiteError, mergeScans, scanFromPage, subpageLinks, type SiteScan } from "../domain/site-scan";
+import { lookup } from "node:dns/promises";
+import { cleanSiteUrl, failedScan, isDeadSiteError, isNotASite, mergeScans, scanFromPage, siteKey, subpageLinks, type SiteScan } from "../domain/site-scan";
 
 /** Сайт пересканируем не чаще раза в две недели: он меняется редко, а запрос к парсеру занимает воркер. */
 const FRESH_MS = 14 * 24 * 60 * 60 * 1000;
+/** Временный сбой (парсер занят, таймаут) повторяем не раньше чем через сутки — без лавины задач в парсере. */
+const RETRY_FAILED_MS = 24 * 60 * 60 * 1000;
 const SCANNABLE = new Set(["WEBSITE_EXISTS", "UNCERTAIN"]);
 
 type Org = { id: string; tenantId: string; website: string | null; websiteStatus: string; siteScan: Prisma.JsonValue | null };
 
 /** Парсер отвечает 429/503, когда все его компьютеры заняты сбором. Ждём и пробуем ещё — иначе лид теряет факты с сайта. */
-async function withRetry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
   for (let i = 1; ; i += 1) {
     try {
       return await fn();
@@ -31,9 +34,39 @@ export function storedScan(value: Prisma.JsonValue | null | undefined): SiteScan
 }
 
 function needsScan(org: Org) {
-  if (!org.website || !SCANNABLE.has(org.websiteStatus)) return false;
+  if (!org.website || !SCANNABLE.has(org.websiteStatus) || isNotASite(org.website)) return false;
   const scan = storedScan(org.siteScan);
-  return !scan || Date.now() - new Date(scan.scannedAt).getTime() > FRESH_MS;
+  if (!scan) return true;
+  const age = Date.now() - new Date(scan.scannedAt).getTime();
+  if (!scan.ok && scan.error && isDeadSiteError(scan.error)) return age > FRESH_MS;
+  return age > (scan.ok ? FRESH_MS : RETRY_FAILED_MS);
+}
+
+/** Домен не резолвится — не отправляем задачу в парсер вовсе (иначе каждая попытка — ошибка у оператора парсера). */
+async function domainResolves(url: string) {
+  try {
+    await lookup(new URL(url).hostname);
+    return true;
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    return !(code === "ENOTFOUND" || code === "ENODATA" || code === "EAI_NONAME");
+  }
+}
+
+/** Точки одной сети ссылаются на один сайт: берём свежий скан соседа вместо нового запроса к парсеру. */
+async function siblingScan(org: Org, url: string): Promise<SiteScan | null> {
+  const key = siteKey(url);
+  const host = key.split("/")[0];
+  const rows = await prisma.organization.findMany({
+    where: { tenantId: org.tenantId, id: { not: org.id }, website: { contains: host, mode: "insensitive" }, websiteCheckedAt: { gte: new Date(Date.now() - FRESH_MS) } },
+    select: { website: true, siteScan: true },
+    take: 20,
+  });
+  for (const row of rows) {
+    const scan = storedScan(row.siteScan);
+    if (scan && row.website && siteKey(row.website) === key && (scan.ok || (scan.error && isDeadSiteError(scan.error)))) return scan;
+  }
+  return null;
 }
 
 /**
@@ -45,9 +78,21 @@ export async function scanSite(org: Org): Promise<SiteScan | null> {
   if (!(await isReady(org.tenantId, "parser"))) return storedScan(org.siteScan);
   const integration = await requireReady(org.tenantId, "parser", "Скан сайта");
   const client = new ParserClient(String(integration.config.baseUrl), integration.secrets.apiKey);
-  const url = org.website!.startsWith("http") ? org.website! : `https://${org.website}`;
+  const url = cleanSiteUrl(org.website!);
   const started = Date.now();
   let scan: SiteScan;
+  const shared = await siblingScan(org, url);
+  if (shared) {
+    await saveScan(org, shared);
+    logEvent("site.scan.shared", { organizationId: org.id, url });
+    return shared;
+  }
+  if (!(await domainResolves(url))) {
+    scan = failedScan(url, "net::ERR_NAME_NOT_RESOLVED — домен из карточки не существует (проверено без парсера)");
+    await saveScan(org, scan);
+    logEvent("site.scan.dead_domain", { organizationId: org.id, url });
+    return scan;
+  }
   try {
     const body = (await withRetry(() => client.pageHtml(url, `lf-scan-${org.id}-${new Date().toISOString().slice(0, 10)}`))) as {
       status?: string;
@@ -74,8 +119,12 @@ export async function scanSite(org: Org): Promise<SiteScan | null> {
   } catch (error) {
     // Лимит частоты или временный сбой парсера — не записываем «сайт мёртв», просто пропускаем скан.
     if (error instanceof RetryableError || (error instanceof ApiError && error.status >= 500)) {
+      // Фиксируем временный сбой со временем: следующая попытка — через сутки, а не при каждом пересчёте.
       logEvent("site.scan.skip", { organizationId: org.id, reason: error.message }, "warn");
-      return storedScan(org.siteScan);
+      const previous = storedScan(org.siteScan);
+      if (previous?.ok) return previous;
+      await saveScan(org, failedScan(url, `Временный сбой парсера: ${error.message}`));
+      return null;
     }
     scan = failedScan(url, error instanceof Error ? error.message : String(error));
   }

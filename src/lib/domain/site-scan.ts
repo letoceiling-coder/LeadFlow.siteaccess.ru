@@ -215,3 +215,39 @@ export function siteIsGood(scan: SiteScan | null | undefined) {
   if (!scan?.ok) return false;
   return scan.viewport && scan.https && (scan.booking || scan.cart) && !scan.builder && !(scan.copyrightYear && scan.copyrightYear <= new Date().getFullYear() - 3);
 }
+
+const TRACKING = /^(utm_[a-z]+|erid|yclid|gclid|fbclid|ysclid|_openstat|from|roistat|clid)$/i;
+
+/** Ссылка из карточки часто рекламная (erid, utm): убираем метки, чтобы сканировать сам сайт и не плодить дубли. */
+export function cleanSiteUrl(raw: string): string {
+  const withProto = raw.startsWith("http") ? raw : `https://${raw}`;
+  try {
+    const url = new URL(withProto);
+    for (const key of [...url.searchParams.keys()]) if (TRACKING.test(key)) url.searchParams.delete(key);
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return withProto;
+  }
+}
+
+const NOT_SITES = /(^|\.)(avito\.ru|youtube\.com|youtu\.be|wa\.me|whatsapp\.com|t\.me|telegram\.me|vk\.com|vk\.ru|ok\.ru|instagram\.com|facebook\.com|max\.ru|2gis\.ru|yandex\.ru|ya\.ru|google\.com|dikidi\.net|taplink\.cc)$/i;
+
+/** Соцсети, мессенджеры и площадки — это контакты, а не сайт лида: их не сканируем как сайт. */
+export function isNotASite(raw: string): boolean {
+  try {
+    return NOT_SITES.test(new URL(raw.startsWith("http") ? raw : `https://${raw}`).hostname);
+  } catch {
+    return true;
+  }
+}
+
+/** Ключ сайта для повторного использования скана у точек одной сети: хост + путь без меток. */
+export function siteKey(raw: string): string {
+  try {
+    const url = new URL(cleanSiteUrl(raw));
+    return `${url.hostname.replace(/^www\./, "")}${url.pathname.replace(/\/$/, "")}`.toLowerCase();
+  } catch {
+    return raw.toLowerCase();
+  }
+}
