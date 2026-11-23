@@ -13,6 +13,19 @@ const SCANNABLE = new Set(["WEBSITE_EXISTS", "UNCERTAIN"]);
 
 type Org = { id: string; tenantId: string; website: string | null; websiteStatus: string; siteScan: Prisma.JsonValue | null };
 
+/** Парсер отвечает 429/503, когда все его компьютеры заняты сбором. Ждём и пробуем ещё — иначе лид теряет факты с сайта. */
+async function withRetry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
+  for (let i = 1; ; i += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      const temporary = error instanceof RetryableError || (error instanceof ApiError && error.status >= 500);
+      if (!temporary || i >= attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 15_000 * i));
+    }
+  }
+}
+
 export function storedScan(value: Prisma.JsonValue | null | undefined): SiteScan | null {
   return value && typeof value === "object" && !Array.isArray(value) && "scannedAt" in value ? (value as unknown as SiteScan) : null;
 }
@@ -36,7 +49,7 @@ export async function scanSite(org: Org): Promise<SiteScan | null> {
   const started = Date.now();
   let scan: SiteScan;
   try {
-    const body = (await client.pageHtml(url, `lf-scan-${org.id}-${new Date().toISOString().slice(0, 10)}`)) as {
+    const body = (await withRetry(() => client.pageHtml(url, `lf-scan-${org.id}-${new Date().toISOString().slice(0, 10)}`))) as {
       status?: string;
       error?: string | null;
       result?: { html?: string; text?: string; title?: string; httpStatus?: number; finalUrl?: string; timings?: { totalMs?: number } } | null;
