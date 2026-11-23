@@ -58,7 +58,7 @@ export function InsightsCard() {
   return (
     <Glass className="space-y-4 p-4">
       <div className="flex items-center gap-2"><Lightbulb className="h-5 w-5 text-[var(--h-accent)]" /><span className="font-semibold">Чему научились</span></div>
-      {data.advice.length ? <div className="space-y-2">{data.advice.map((text) => <Notice key={text}>{text}</Notice>)}</div> : <p className="text-sm text-[var(--h-muted)]">Выводы появятся после первых поисков и отправок.</p>}
+      {data.advice.length ? <div className="space-y-2">{data.advice.map((text, index) => <Notice key={`${index}-${text}`}>{text}</Notice>)}</div> : <p className="text-sm text-[var(--h-muted)]">Выводы появятся после первых поисков и отправок.</p>}
 
       {data.searches.length ? (
         <div>
@@ -92,7 +92,7 @@ export function InsightsCard() {
       {data.hooks.length ? (
         <div>
           <div className="mb-1.5 text-sm text-[var(--h-muted)]">Крючки, на которые ответили</div>
-          <ul className="space-y-1.5">{data.hooks.map((hook) => <li key={hook} className="rounded-xl bg-white/[0.04] px-3 py-2 text-sm">«{hook}»</li>)}</ul>
+          <ul className="space-y-1.5">{data.hooks.map((hook, index) => <li key={`${index}-${hook}`} className="rounded-xl bg-white/[0.04] px-3 py-2 text-sm">«{hook}»</li>)}</ul>
         </div>
       ) : null}
 

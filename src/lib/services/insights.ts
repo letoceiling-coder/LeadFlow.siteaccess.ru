@@ -69,6 +69,7 @@ export async function insights(tenantId: string) {
     .filter((row) => row.repliedAt)
     .map((row) => (row.card as unknown as ObservationCard | null)?.observation ?? row.pitch?.split("\n").find((line) => line.startsWith("Увидел")) ?? null)
     .filter((text): text is string => Boolean(text))
+    .filter((text, index, list) => list.indexOf(text) === index)
     .slice(0, 6);
 
   const rejected = await prisma.outreach.groupBy({ by: ["rejectReason"], where: { tenantId, status: { in: ["rejected", "lost"] }, rejectReason: { not: null } }, _count: { _all: true } });
