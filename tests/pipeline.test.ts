@@ -121,3 +121,21 @@ describe("задание агенту фразой", () => {
     expect(parseHuntQuery("стоматология спб, мск 20").cities).toEqual(["Москва", "Санкт-Петербург"]);
   });
 });
+
+import { mergeScans, subpageLinks } from "../src/lib/domain/site-scan";
+
+describe("внутренние страницы сайта", () => {
+  it("находит меню и доставку на том же домене", () => {
+    const html = `<a href="#x">Меню</a><a href="https://www.hayao.ru/menu#main">МЕНЮ</a><a href="/delivery">ДОСТАВКА</a><a href="https://vk.com/x">Меню VK</a><a href="/about">О нас</a>`;
+    expect(subpageLinks(html, "https://www.hayao.ru/cg")).toEqual(["https://www.hayao.ru/menu", "https://www.hayao.ru/delivery"]);
+  });
+  it("корзина на странице доставки снимает ложный факт «нет корзины»", () => {
+    const main = scanFromPage({ url: "https://hayao.ru", html: `<meta name="viewport"><a href="/delivery">Доставка</a>`, text: "Ресторан японской кухни. О ресторане, команда, контакты и адрес", httpStatus: 200 }, NOW);
+    const sub = scanFromPage({ url: "https://hayao.ru/delivery", html: `<meta name="viewport">`, text: "Филадельфия 690 ₽ — В корзину. Оформить заказ с доставкой по городу", httpStatus: 200 }, NOW);
+    expect(siteChaos(main, "A1", NOW)).toContain("На сайте нет корзины — заказ только по телефону или в мессенджере");
+    expect(siteChaos(mergeScans(main, [sub]), "A1", NOW)).not.toContain("На сайте нет корзины — заказ только по телефону или в мессенджере");
+  });
+  it("ссылка на Яндекс Еду считается корзиной", () => {
+    expect(scanFromPage({ url: "https://s.ru", html: `<a href="https://eda.yandex.ru/r/sushi">Заказать</a>`, text: "Суши и роллы в Краснодаре, доставка каждый день", httpStatus: 200 }, NOW).cart).toBe(true);
+  });
+});

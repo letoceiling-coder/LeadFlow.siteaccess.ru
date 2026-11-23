@@ -131,7 +131,7 @@ export function scanFromPage(input: { url: string; html: string; text: string; t
     https: finalUrl.startsWith("https://"),
     viewport: /<meta[^>]+name=["']viewport["']/i.test(html),
     booking: BOOKING.test(html) || BOOKING.test(lowerText),
-    cart: CART.test(lowerText) || /class=["'][^"']*\bcart\b/i.test(html),
+    cart: CART.test(lowerText) || /class=["'][^"']*\bcart\b/i.test(html) || ORDER_PLATFORMS.test(html),
     prices: PRICES.test(lowerText),
     form: /<form[\s>]/i.test(html) || /оставить заявку|обратный звонок|перезвоним/i.test(lowerText),
     builder: builderHost(finalUrl) ?? marker,
@@ -141,6 +141,46 @@ export function scanFromPage(input: { url: string; html: string; text: string; t
     phones: extractPhones(html),
     links: extractLinks(html),
     scannedAt: now.toISOString(),
+  };
+}
+
+/** Внешние сервисы заказа и записи: ссылка на них = корзина или запись у бизнеса уже есть. */
+const ORDER_PLATFORMS = /eda\.yandex|market-delivery\.yandex|delivery-club|sbermarket|kuper\.ru|iiko|tillypad|frontpad|starterapp|foodsoul|yclients|dikidi|sonline|medods|prodoctorov|n\d+\.yclients/i;
+const SUBPAGE_TEXT = /меню|доставк|заказ|цен[аы]|прайс|запис|услуг|каталог|бронир/i;
+
+/** До двух внутренних страниц, где обычно живут меню, цены и запись. Главная часто — просто витрина. */
+export function subpageLinks(html: string, baseUrl: string): string[] {
+  let base: URL;
+  try { base = new URL(baseUrl); } catch { return []; }
+  const out: string[] = [];
+  for (const m of decode(html).matchAll(/<a[^>]+href=["']([^"'#]+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    const label = m[2].replace(/<[^>]+>/g, " ").trim();
+    if (!SUBPAGE_TEXT.test(label)) continue;
+    try {
+      const url = new URL(m[1], base);
+      if (url.hostname.replace(/^www\./, "") !== base.hostname.replace(/^www\./, "")) continue;
+      const clean = `${url.origin}${url.pathname}`.replace(/\/$/, "");
+      if (clean === `${base.origin}${base.pathname}`.replace(/\/$/, "") || out.includes(clean)) continue;
+      out.push(clean);
+    } catch { /* битая ссылка */ }
+    if (out.length >= 2) break;
+  }
+  return out;
+}
+
+/** Склеивает скан главной со сканами внутренних страниц: признак есть, если он есть хоть где-то. */
+export function mergeScans(main: SiteScan, extra: SiteScan[]): SiteScan {
+  const ok = extra.filter((item) => item.ok);
+  if (!ok.length) return main;
+  return {
+    ...main,
+    booking: main.booking || ok.some((item) => item.booking),
+    cart: main.cart || ok.some((item) => item.cart),
+    prices: main.prices || ok.some((item) => item.prices),
+    form: main.form || ok.some((item) => item.form),
+    emails: unique([...main.emails, ...ok.flatMap((item) => item.emails)]).slice(0, 5),
+    phones: unique([...main.phones, ...ok.flatMap((item) => item.phones)]).slice(0, 5),
+    links: [...main.links, ...ok.flatMap((item) => item.links)].filter((link, index, list) => list.findIndex((other) => other.url.toLowerCase() === link.url.toLowerCase()) === index).slice(0, 10),
   };
 }
 

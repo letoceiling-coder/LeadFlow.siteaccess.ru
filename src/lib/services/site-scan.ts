@@ -5,7 +5,7 @@ import { ApiError, RetryableError } from "../errors";
 import { ParserClient } from "../integrations/parser";
 import { isReady, requireReady } from "../integrations/config";
 import { logEvent } from "../log";
-import { failedScan, isDeadSiteError, scanFromPage, type SiteScan } from "../domain/site-scan";
+import { failedScan, isDeadSiteError, mergeScans, scanFromPage, subpageLinks, type SiteScan } from "../domain/site-scan";
 
 /** Сайт пересканируем не чаще раза в две недели: он меняется редко, а запрос к парсеру занимает воркер. */
 const FRESH_MS = 14 * 24 * 60 * 60 * 1000;
@@ -46,6 +46,17 @@ export async function scanSite(org: Org): Promise<SiteScan | null> {
     } else {
       const r = body.result;
       scan = scanFromPage({ url, html: r.html ?? "", text: r.text ?? "", title: r.title, httpStatus: r.httpStatus ?? null, finalUrl: r.finalUrl, loadMs: r.timings?.totalMs ?? Date.now() - started });
+      // Главная часто витрина: меню, цены и запись живут на внутренних страницах. Без них выводы о «нет корзины» ложные.
+      if (scan.ok && !(scan.booking && scan.cart && scan.prices)) {
+        const extra: SiteScan[] = [];
+        for (const sub of subpageLinks(r.html ?? "", scan.url)) {
+          try {
+            const page = (await client.pageHtml(sub, `lf-scan-${org.id}-${sub.length}-${new Date().toISOString().slice(0, 10)}`)) as typeof body;
+            if (page.status === "completed" && page.result) extra.push(scanFromPage({ url: sub, html: page.result.html ?? "", text: page.result.text ?? "", httpStatus: page.result.httpStatus ?? null, finalUrl: page.result.finalUrl }));
+          } catch { /* внутренняя страница не открылась — судим по тому, что есть */ }
+        }
+        scan = { ...mergeScans(scan, extra), pages: 1 + extra.length } as SiteScan;
+      }
     }
   } catch (error) {
     // Лимит частоты или временный сбой парсера — не записываем «сайт мёртв», просто пропускаем скан.
