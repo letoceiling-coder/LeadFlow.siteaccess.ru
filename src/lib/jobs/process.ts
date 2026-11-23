@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "../db";
 import { ApiError, FatalJobError, RetryableError } from "../errors";
-import { finishJob, failJob, reschedule } from "./queue";
+import { enqueueJob, finishJob, failJob, reschedule } from "./queue";
 import { logEvent } from "../log";
 import { refreshParserTask, runSync, submitParserTask } from "../services/parser";
 import { runAnalysis } from "../services/analysis";
@@ -30,7 +30,9 @@ export async function processJob(job: JobRow) {
   try {
     if (job.type === "parser.submit") {
       try {
-        await submitParserTask(String(data.parserTaskId));
+        const submitted = await submitParserTask(String(data.parserTaskId));
+        // Отложенный запуск тоже должен опрашивать результат — иначе поиск навсегда остаётся «в очереди».
+        await enqueueJob({ tenantId: submitted.tenantId, type: "parser.poll", payload: { parserTaskId: submitted.id }, idempotencyKey: `poll:${submitted.id}` });
       } catch (error) {
         const task = await prisma.parserTask.findUnique({ where: { id: String(data.parserTaskId) }, select: { createdAt: true } });
         const tooOld = task && Date.now() - task.createdAt.getTime() > 3 * 60 * 60 * 1000;

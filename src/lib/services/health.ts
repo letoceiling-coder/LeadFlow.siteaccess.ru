@@ -28,7 +28,22 @@ async function parserWorkers(tenantId: string) {
   return value;
 }
 
+/** Страховка цепочки: поиск принят парсером, но опроса результата нет (сбой, рестарт) — ставим опрос. */
+export async function reviveSearches(tenantId: string) {
+  const { enqueueJob } = await import("../jobs/queue");
+  const stuck = await prisma.parserTask.findMany({ where: { tenantId, externalId: { not: null }, status: { in: ["queued", "running"] } }, select: { id: true } });
+  let revived = 0;
+  for (const task of stuck) {
+    const live = await prisma.job.findFirst({ where: { tenantId, type: "parser.poll", status: { in: ["queued", "running"] }, payload: { path: ["parserTaskId"], equals: task.id } }, select: { id: true } });
+    if (live) continue;
+    await enqueueJob({ tenantId, type: "parser.poll", payload: { parserTaskId: task.id }, idempotencyKey: `poll:${task.id}:revive:${Date.now()}` });
+    revived += 1;
+  }
+  return revived;
+}
+
 export async function systemHealth(tenantId: string) {
+  await reviveSearches(tenantId);
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const [heartbeat, jobs, failures, lastTask, ai, sheets, parser, workers] = await Promise.all([
     prisma.workerHeartbeat.findUnique({ where: { id: "default" } }),
