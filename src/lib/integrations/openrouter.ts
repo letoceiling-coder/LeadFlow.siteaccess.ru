@@ -67,7 +67,7 @@ export async function completeJson(options: {
   if (!options.model.trim()) {
     throw new ApiError(422, "Модель AI не выбрана. Укажите её в настройках.", "model_required");
   }
-  const run = async (extra: string) => {
+  const run = async (extra: string, maxTokens = options.maxTokens): Promise<{ content: string; usage: { prompt_tokens?: number; completion_tokens?: number; cost?: number } }> => {
     const { response, body } = await requestJson(`${options.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       timeoutMs: 60000,
@@ -79,7 +79,9 @@ export async function completeJson(options: {
       body: JSON.stringify({
         model: options.model,
         temperature: 0.1,
-        max_tokens: options.maxTokens,
+        max_tokens: maxTokens,
+        // Модели с рассуждением (GLM) иначе тратят весь лимит на «мысли» и возвращают пустой ответ. Коротко и без текста рассуждений — в 4 раза дешевле.
+        reasoning: { effort: "low", exclude: true },
         messages: [
           { role: "system", content: options.system },
           { role: "user", content: `${options.user}\n${extra}` },
@@ -96,7 +98,11 @@ export async function completeJson(options: {
       usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
     };
     const content = record.choices?.[0]?.message?.content;
-    if (!content) throw new ApiError(502, "Модель вернула пустой ответ.", "openrouter_empty");
+    if (!content) {
+      // Пустой ответ почти всегда значит «упёрлись в лимит токенов» — один повтор с двойным лимитом.
+      if (maxTokens === options.maxTokens) return run(extra, options.maxTokens * 2);
+      throw new ApiError(502, "Модель вернула пустой ответ.", "openrouter_empty");
+    }
     return { content, usage: record.usage ?? {} };
   };
 

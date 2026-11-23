@@ -198,7 +198,7 @@ export async function runQualify(organizationId: string, jobTenantId?: string) {
       cost = typeof result.usage.cost === "number" ? result.usage.cost : null;
       billed = true;
     } catch (error) {
-      if (error instanceof ApiError && error.code === "ai_invalid_json") {
+      if (error instanceof ApiError && ["ai_invalid_json", "openrouter_empty"].includes(error.code)) {
         billed = true; // вызов был, просто ответ не разобрался — фиксируем расход как неизвестный
         aiNote = "AI вернул неразборчивый ответ — карточка собрана только из данных источника.";
       } else if (error instanceof ApiError && ["network", "timeout"].includes(error.code)) {
