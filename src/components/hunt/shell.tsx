@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
-import { BarChart3, FolderKanban, House, LayoutGrid, MessagesSquare, Plus, Settings2 } from "lucide-react";
+import { BarChart3, CircleHelp, FolderKanban, House, LayoutGrid, MessagesSquare, Plus, Settings2 } from "lucide-react";
 import { IconButton, ToastProvider, cx } from "./ui";
+import { GuidePanel } from "./guide-panel";
 import { ItemPanel } from "./item-panel";
 import { ProjectPanel } from "./project-panel";
 import { ScenarioPanel } from "./scenario-panel";
@@ -84,6 +85,7 @@ export function HuntShell({ user, children }: { user: HuntUser; children: ReactN
                 <span className="text-[15px] font-semibold">Охота</span>
               </Link>
               <div className="flex-1" />
+              <IconButton label="Как работает охота" onClick={() => open("panel", "guide")}><CircleHelp className="h-5 w-5" /></IconButton>
               <IconButton label="Настройки охоты" onClick={() => open("panel", "settings")}><Settings2 className="h-5 w-5" /></IconButton>
               <IconButton label="Полная версия LeadFlow" onClick={() => router.push("/overview")}><LayoutGrid className="h-5 w-5" /></IconButton>
             </div>
@@ -130,6 +132,7 @@ export function HuntShell({ user, children }: { user: HuntUser; children: ReactN
           <ScenarioPanel id={item || project ? null : scenario} />
           <SearchPanel open={!item && !project && !scenario && panel === "search"} />
           <SettingsPanel open={!item && !project && !scenario && panel === "settings"} />
+          <GuidePanel open={!item && !project && !scenario && panel === "guide"} />
         </ToastProvider>
       </div>
     </HuntContext.Provider>

@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { headers } from "next/headers";
 import { formatPhone, maxLink, telegramLink } from "@/lib/domain/offer";
-import { markProposalViewed, publicProposal } from "@/lib/services/proposals";
+import { isPreviewBot, markProposalViewed, publicProposal } from "@/lib/services/proposals";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +32,8 @@ function Slide({ n, title, children }: { n: string; title: string; children: Rea
 export default async function ProposalPage({ params }: Props) {
   const data = await publicProposal((await params).token);
   if (!data) notFound();
-  await markProposalViewed(data.tenantId, data.organizationId).catch(() => undefined);
+  // Превью ссылки в Telegram/WhatsApp — не просмотр клиентом.
+  if (!isPreviewBot((await headers()).get("user-agent"))) await markProposalViewed(data.tenantId, data.organizationId).catch(() => undefined);
   const p = data.proposal;
   const phone = data.reply.phone ? formatPhone(data.reply.phone) : null;
   const tg = data.reply.telegram ? telegramLink(data.reply.telegram) : null;

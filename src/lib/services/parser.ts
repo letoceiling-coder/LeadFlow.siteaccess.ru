@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { ApiError, RetryableError, publicErrorMessage, safeLog } from "../errors";
 import { needsLargeConfirm, type searchSchema } from "../domain/schemas";
-import { mapParserOrganization } from "../domain/parser-map";
+import { collectStatusOf, mapParserOrganization } from "../domain/parser-map";
 import { ParserClient, asTask } from "../integrations/parser";
 import { requireReady } from "../integrations/config";
 import { enqueueJob } from "../jobs/queue";
@@ -32,7 +32,7 @@ export async function createSearch(tenantId: string, userId: string, input: Sear
     const existing = await prisma.parserTask.findFirst({
       where: {
         tenantId,
-        idempotencyKey: keyBase,
+        OR: [{ idempotencyKey: keyBase }, { idempotencyKey: { startsWith: `${keyBase}:run:` } }],
         createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
         status: { in: ["queued", "running", "completed"] },
       },
@@ -45,7 +45,8 @@ export async function createSearch(tenantId: string, userId: string, input: Sear
       tenantId,
       type: "organizations.collect",
       input: input as unknown as Prisma.InputJsonValue,
-      idempotencyKey: input.force ? `${keyBase}:retry:${Date.now()}` : keyBase,
+      // Ключ всегда уникальный: повтор того же поиска через сутки или после сбоя не должен падать на ограничении базы.
+      idempotencyKey: `${keyBase}:${input.force ? "retry" : "run"}:${Date.now()}`,
       createdById: userId,
     },
   });
@@ -67,7 +68,7 @@ export async function createSearch(tenantId: string, userId: string, input: Sear
 export async function submitParserTask(taskId: string, ready?: Awaited<ReturnType<typeof requireReady>>) {
   const task = await prisma.parserTask.findUnique({ where: { id: taskId } });
   if (!task) throw new ApiError(404, "Задача поиска не найдена", "not_found");
-  if (task.externalId) return task;
+  if (task.externalId || ["cancelled", "failed"].includes(task.status)) return task;
   const integration = ready ?? (await requireReady(task.tenantId, "parser", "Поиск организаций"));
   const input = task.input as Record<string, unknown>;
   if (task.type === "organizations.collect") {
@@ -123,9 +124,10 @@ export async function refreshParserTask(tenantId: string, id: string) {
   const integration = await requireReady(tenantId, "parser", "Обновление задачи");
   if (task.type === "organizations.collect") {
     const st = (await clientFrom(integration).collectStatus(task.externalId)) as { status?: string; stage?: string; stageLabel?: string; progress?: number; message?: string; counters?: Record<string, number>; error?: string | null; etaSeconds?: number | null; eta?: unknown };
-    const status = st.status === "done" ? "completed" : st.status || task.status;
-    const updatedCollect = await prisma.parserTask.update({
-      where: { id: task.id },
+    const status = collectStatusOf(st.status, task.status);
+    // updateMany с условием: параллельная отмена не перетирается устаревшим опросом.
+    await prisma.parserTask.updateMany({
+      where: { id: task.id, status: { notIn: ["cancelled"] } },
       data: {
         status,
         progress: st.progress ?? task.progress,
@@ -134,7 +136,13 @@ export async function refreshParserTask(tenantId: string, id: string) {
         completedAt: status === "completed" ? new Date() : task.completedAt,
       },
     });
+    const updatedCollect = await prisma.parserTask.findUniqueOrThrow({ where: { id } });
     if (updatedCollect.status === "completed" && !updatedCollect.syncedAt) await syncTaskOrganizations(updatedCollect.id);
+    if (["completed", "failed"].includes(updatedCollect.status) && !["completed", "failed"].includes(task.status)) {
+      const input = updatedCollect.input as { city?: string; category?: string };
+      const done = await prisma.parserTask.findUniqueOrThrow({ where: { id } });
+      await notify(tenantId, "Охота: сбор", updatedCollect.status === "completed" ? `${input.category ?? "Поиск"}, ${input.city ?? ""}: собрано ${done.organizationCount ?? 0}. Карточки оцениваются.` : `${input.category ?? "Поиск"}, ${input.city ?? ""}: сбор не удался — ${updatedCollect.error ?? "ошибка парсера"}.`, "/hunt");
+    }
     return prisma.parserTask.findUniqueOrThrow({ where: { id } });
   }
   const remote = asTask(await clientFrom(integration).getTask(task.externalId));
@@ -216,7 +224,9 @@ export async function syncTaskOrganizations(taskId: string) {
   // Квалификация — до отметки syncedAt и по всем увиденным карточкам: при повторе после сбоя ничего не теряется.
   try {
     const { autoQualifyNew } = await import("./hunt");
-    await autoQualifyNew(task.tenantId, [...seen]);
+    const input = task.input as { maxResults?: number; need?: number };
+    const requested = Number(input.maxResults ?? input.need ?? 0);
+    await autoQualifyNew(task.tenantId, [...seen], { explicit: task.type === "organizations.collect", max: requested || seen.size });
   } catch (error) {
     safeLog("hunt.autoQualify", error);
   }

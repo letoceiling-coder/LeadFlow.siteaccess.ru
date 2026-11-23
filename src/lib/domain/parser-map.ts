@@ -150,3 +150,12 @@ export function fallbackExternalId(name: string, city: string | null, address: s
   const normalized = `${name}|${city ?? ""}|${address ?? ""}`.trim().toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ");
   return `local:${normalized}`;
 }
+
+/** Статусы массового сбора парсера → наши. Неизвестный конечный статус не должен держать опрос вечно. */
+export function collectStatusOf(remote: string | undefined, current: string) {
+  if (!remote) return current;
+  if (["done", "completed", "finished"].includes(remote)) return "completed";
+  if (["error", "failed", "expired", "timeout"].includes(remote)) return "failed";
+  if (["cancelled", "canceled"].includes(remote)) return "cancelled";
+  return remote;
+}

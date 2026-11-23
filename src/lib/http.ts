@@ -29,7 +29,14 @@ export async function requestJson(url: string, init: JsonInit = {}) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new ApiError(504, "Внешний сервис не ответил вовремя", "timeout", "Повторите действие позже. Уже сохранённые данные не удаляются.");
     }
-    throw new ApiError(502, "Не удалось связаться с внешним сервисом", "network", "Проверьте доступность сервиса и ключ в разделе «Интеграции».");
+    const proxyStatus = error instanceof Error ? /^proxy_connect_(\d+)/.exec(error.message)?.[1] : undefined;
+    if (proxyStatus === "407") {
+      throw new ApiError(502, "Прокси требует логин и пароль (ответ 407)", "network", "Впишите прокси полностью: http://логин:пароль@хост:порт в «Охота» → шестерёнка → AI-скоринг.");
+    }
+    if (proxyStatus) {
+      throw new ApiError(502, `Прокси отказал в соединении (ответ ${proxyStatus})`, "network", "Проверьте, что IP сервера разрешён на прокси, и адрес прокси в «Охота» → шестерёнка → AI-скоринг.");
+    }
+    throw new ApiError(502, init.proxy ? "Прокси не отвечает" : "Не удалось связаться с внешним сервисом", "network", "Проверьте доступность сервиса и ключ в разделе «Интеграции».");
   } finally {
     clearTimeout(timeout);
   }

@@ -49,6 +49,8 @@ export type QualifyFacts = {
   site?: SiteScan | null;
   /** Тексты свежих отзывов с карт — в них клиенты сами пишут, где теряются заявки. */
   reviews?: string[];
+  /** Сколько точек с тем же названием в этом городе (своя сеть, не федеральная). */
+  branches?: number | null;
 };
 
 export type CardFact = { text: string; source: string; kind: "fact" | "assumption" };
@@ -198,6 +200,7 @@ export function buildCard(facts: QualifyFacts, ai: QualifyResult | null): Observ
   const complaint = reviewComplaint(facts.reviews ?? []);
   if (complaint && !chaos.some((item) => item.source === "reviews")) chaos.unshift({ text: complaint, source: "reviews", kind: "fact" });
   const priced = facts.services.filter((item) => /\d\s?₽|руб/.test(item)).length;
+  if (facts.branches && facts.branches >= 2 && !growth.some((item) => item.source === "branches")) growth.push({ text: `Своя сеть: ${facts.branches} ${plural(facts.branches, "точка", "точки", "точек")} в городе`, source: "branches", kind: "fact" });
   if (priced >= 5 && !growth.some((item) => item.source === "services")) growth.push({ text: `Прайс на картах: ${priced} услуг с ценами`, source: "services", kind: "fact" });
 
   // Хаос со страницы сайта: открыли её через парсер и проверили запись, корзину, цены, адаптив.
@@ -313,6 +316,16 @@ export function addManualFact(card: ObservationCard, kind: "money" | "chaos", te
   const list = card[kind];
   if (!clean || list.some((item) => item.text.toLowerCase() === clean.toLowerCase())) return card;
   return { ...card, [kind]: [...list, { text: clean, source: "manual", kind: "fact" }] };
+}
+
+/** Ручные факты (подтверждены глазами) переживают пересчёт карточки. */
+export function keepManualFacts(previous: ObservationCard | null | undefined, next: ObservationCard): ObservationCard {
+  if (!previous) return next;
+  let card = next;
+  for (const kind of ["money", "chaos"] as const) {
+    for (const item of previous[kind] ?? []) if (item.source === "manual") card = addManualFact(card, kind, item.text);
+  }
+  return card;
 }
 
 /** A — 75+, B — 60–74. Без подтверждённых фактов карточка не поднимается выше C (стоп-правило §5). */

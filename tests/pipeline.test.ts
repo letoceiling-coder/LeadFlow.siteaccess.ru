@@ -152,3 +152,55 @@ describe("недорисованные страницы", () => {
     expect(scanFromPage({ url: "https://yoyo.ru", html: "", text: "YoYo Sushi Краснодар. Доставка и самовывоз. Заберу здесь. Откроемся в 11:00. Улица Невкипелого, 21/5, Краснодар. Контакты +7 918 039 70 23. Используем cookies.", httpStatus: 200 }, NOW).cart).toBe(true);
   });
 });
+
+import { collectStatusOf } from "../src/lib/domain/parser-map";
+import { keepManualFacts, addManualFact } from "../src/lib/domain/qualify";
+import { isPreviewBot } from "../src/lib/domain/proposal";
+import { validProxy } from "../src/lib/integrations/openrouter";
+
+describe("надёжность цепочки", () => {
+  it("конечные статусы сбора не держат опрос вечно", () => {
+    expect(collectStatusOf("done", "running")).toBe("completed");
+    expect(collectStatusOf("error", "running")).toBe("failed");
+    expect(collectStatusOf("canceled", "running")).toBe("cancelled");
+    expect(collectStatusOf("running", "queued")).toBe("running");
+    expect(collectStatusOf(undefined, "running")).toBe("running");
+  });
+  it("своя сеть в городе — признак роста", () => {
+    const card = buildCard({ ...base, branches: 4 }, null);
+    expect(card.growth.some((item) => item.text === "Своя сеть: 4 точки в городе")).toBe(true);
+    expect(buildCard({ ...base, branches: null }, null).growth.some((item) => item.source === "branches")).toBe(false);
+  });
+  it("ручной факт переживает пересчёт карточки", () => {
+    const before = addManualFact(buildCard(base, null), "chaos", "Трубку не берут после 18:00");
+    const after = keepManualFacts(before, buildCard(base, null));
+    expect(after.chaos.some((item) => item.source === "manual" && item.text === "Трубку не берут после 18:00")).toBe(true);
+    expect(keepManualFacts(after, after).chaos.filter((item) => item.source === "manual")).toHaveLength(1);
+  });
+  it("превью ссылки в мессенджере не считается просмотром КП", () => {
+    expect(isPreviewBot("TelegramBot (like TwitterBot)")).toBe(true);
+    expect(isPreviewBot("WhatsApp/2.23.20.0")).toBe(true);
+    expect(isPreviewBot(null)).toBe(true);
+    expect(isPreviewBot("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148")).toBe(false);
+  });
+  it("прокси только http:// с портом или direct", () => {
+    expect(validProxy("http://user:pass@82.25.60.43:8888")).toBe("http://user:pass@82.25.60.43:8888");
+    expect(validProxy("https://82.25.60.43:8888")).toBeNull();
+    expect(validProxy("82.25.60.43:8888")).toBeNull();
+    expect(validProxy("direct")).toBe("direct");
+  });
+});
+
+import http from "node:http";
+import { requestJson } from "../src/lib/http";
+
+describe("ошибки прокси понятны человеку", () => {
+  it("407 → «прокси требует логин и пароль»", async () => {
+    const server = http.createServer();
+    server.on("connect", (_req, socket) => socket.end("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"Tinyproxy\"\r\n\r\n"));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as { port: number }).port;
+    await expect(requestJson("https://openrouter.ai/api/v1/key", { proxy: `http://127.0.0.1:${port}`, timeoutMs: 5000 })).rejects.toThrow("Прокси требует логин и пароль");
+    server.close();
+  });
+});

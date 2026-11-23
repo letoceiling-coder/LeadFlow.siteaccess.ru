@@ -31,6 +31,12 @@ export async function processJob(job: JobRow) {
   try {
     if (job.type === "parser.submit") {
       try {
+        const pending = await prisma.parserTask.findUnique({ where: { id: String(data.parserTaskId) }, select: { status: true } });
+        // Поиск отменили, пока он ждал очереди парсера, — не запускаем платный сбор.
+        if (!pending || ["cancelled", "failed"].includes(pending.status)) {
+          await finishJob(job.id, { skipped: pending?.status ?? "missing" });
+          return;
+        }
         const submitted = await submitParserTask(String(data.parserTaskId));
         // Отложенный запуск тоже должен опрашивать результат — иначе поиск навсегда остаётся «в очереди».
         await enqueueJob({ tenantId: submitted.tenantId, type: "parser.poll", payload: { parserTaskId: submitted.id }, idempotencyKey: `poll:${submitted.id}` });
@@ -51,7 +57,26 @@ export async function processJob(job: JobRow) {
     else if (job.type === "parser.poll") {
       const existing = await prisma.parserTask.findUnique({ where: { id: String(data.parserTaskId) } });
       if (!existing) throw new FatalJobError("Задача поиска не найдена");
-      await refreshParserTask(existing.tenantId, existing.id);
+      // Поиск не должен навсегда остаться «идёт»: сбор дольше 6 часов или окончательная ошибка → «failed» с причиной.
+      const tooLong = Date.now() - existing.createdAt.getTime() > 6 * 60 * 60 * 1000;
+      if (tooLong && !["completed", "failed", "cancelled"].includes(existing.status)) {
+        await prisma.parserTask.update({ where: { id: existing.id }, data: { status: "failed", error: "Сбор не завершился за 6 часов — запустите поиск снова." } });
+        logEvent("parser.task_timeout", { ...base, task: existing.id }, "warn");
+        throw new FatalJobError("Сбор не завершился за 6 часов");
+      }
+      try {
+        await refreshParserTask(existing.tenantId, existing.id);
+      } catch (error) {
+        const current = await prisma.job.findUnique({ where: { id: job.id }, select: { attempts: true, maxAttempts: true } });
+        const lastTry = !current || current.attempts >= current.maxAttempts;
+        const fatal = error instanceof FatalJobError || (error instanceof ApiError && error.status < 500);
+        if (fatal || (lastTry && !(error instanceof RetryableError && !error.consumeAttempt))) {
+          const reason = error instanceof ApiError ? error.message : "Не удалось получить результаты сбора";
+          await prisma.parserTask.update({ where: { id: existing.id }, data: { status: "failed", error: `${reason}. Запустите поиск снова.`.slice(0, 300) } });
+          logEvent("parser.task_failed", { ...base, task: existing.id, error: reason }, "error");
+        }
+        throw error;
+      }
       const fresh = await prisma.parserTask.findUnique({ where: { id: existing.id } });
       // Массовый сбор идёт минутами (паузы против капчи) — опрашиваем реже.
       if (fresh && !["completed", "failed", "cancelled"].includes(fresh.status)) throw new RetryableError("Поиск ещё выполняется.", fresh.type === "organizations.collect" ? 15000 : 5000);

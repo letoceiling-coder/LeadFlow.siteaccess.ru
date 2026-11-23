@@ -23,7 +23,8 @@ export function validProxy(value: string): string | null {
   if (clean === "direct") return clean;
   try {
     const url = new URL(clean);
-    if (!["http:", "https:"].includes(url.protocol) || !url.hostname || !url.port) return null;
+    // Подключение через прокси умеет только http:// (CONNECT) — https-прокси молча не работал бы.
+    if (url.protocol !== "http:" || !url.hostname || !url.port) return null;
     return clean;
   } catch {
     return null;

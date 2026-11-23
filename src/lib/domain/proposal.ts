@@ -120,3 +120,9 @@ export function proposalText(proposal: Proposal, url: string) {
     proposal.nextStep,
   ].join("\n\n");
 }
+
+/** Превью ссылок в мессенджерах и поисковые роботы — не «клиент открыл». */
+export function isPreviewBot(userAgent: string | null | undefined) {
+  if (!userAgent) return true;
+  return /bot|crawler|spider|preview|TelegramBot|WhatsApp|vkShare|facebookexternalhit|Slackbot|Discordbot|Twitterbot|SkypeUriPreview|curl|wget|python|node-fetch|HeadlessChrome/i.test(userAgent);
+}

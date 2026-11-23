@@ -16,6 +16,7 @@ import {
   buildQualifyPrompt,
   flagsFromFactors,
   isIncomplete,
+  keepManualFacts,
   qualifyResultSchema,
   strategyScore,
   type ObservationCard,
@@ -132,10 +133,12 @@ export async function qualifyPending(tenantId: string, actorId: string | null, l
 }
 
 /** После поиска: все увиденные карточки без квалификации (не только созданные в этой попытке синхронизации). */
-export async function autoQualifyNew(tenantId: string, organizationIds: string[]) {
+export async function autoQualifyNew(tenantId: string, organizationIds: string[], options: { explicit?: boolean; max?: number } = {}) {
   if (!organizationIds.length) return;
   const settings = await getSettings(tenantId);
   if (!settings.hunt.autoQualify || settings.hunt.autoQualifyMax <= 0) return;
+  // Поиск из «Охоты» с явной нишей: человек сам выбрал нишу и количество — оцениваем всё собранное, без фильтра сегментов.
+  const limit = options.explicit ? Math.max(settings.hunt.autoQualifyMax, options.max ?? 0) : settings.hunt.autoQualifyMax;
   // Без AI карточка всё равно собирается по данным источника — конвейер не должен вставать из-за OpenRouter.
   const active = new Set<string>(settings.hunt.activeSegments);
   const orgs = await prisma.organization.findMany({
@@ -146,9 +149,9 @@ export async function autoQualifyNew(tenantId: string, organizationIds: string[]
   const ids = orgs
     .filter((item) => {
       const segment = detectSegment(item.category, item.categories);
-      return segment == null || active.has(segment);
+      return options.explicit || segment == null || active.has(segment);
     })
-    .slice(0, settings.hunt.autoQualifyMax)
+    .slice(0, limit)
     .map((item) => item.id);
   if (ids.length) await enqueueQualify(tenantId, null, ids, true);
 }
@@ -167,10 +170,13 @@ export async function runQualify(organizationId: string, jobTenantId?: string) {
     logEvent("site.scan.error", { organizationId, error: error instanceof Error ? error.message : String(error) }, "warn");
   }
   const fresh = await prisma.organization.findUniqueOrThrow({ where: { id: organizationId }, include: { contacts: true } });
-  const facts = factsOf(fresh);
+  const branches = fresh.city
+    ? await prisma.organization.count({ where: { tenantId, city: fresh.city, name: { equals: fresh.name, mode: "insensitive" }, isDemo: false } })
+    : 1;
+  const facts = { ...factsOf(fresh), branches: branches >= 2 ? branches : null };
   if (isIncomplete(facts)) {
     // Парсер вернул пустую карточку — AI не вызываем, деньги не тратим. Её можно открыть по ссылке на источник.
-    const data = { segment: detectSegment(org.category, org.categories), score: 0, priority: "D", card: Prisma.DbNull, factors: Prisma.DbNull, cardStatus: "incomplete", error: "Парсер не дочитал карточку: нет названия или контактов.", qualifiedAt: new Date() };
+    const data = { segment: detectSegment(org.category, org.categories), score: 0, priority: "D", card: Prisma.DbNull, factors: Prisma.DbNull, cardStatus: "incomplete", model: null, costUsd: null, error: "На картах и на сайте нет ни телефона, ни мессенджера, ни почты — писать некуда. Откройте карточку на Яндекс Картах и проверьте вручную.", qualifiedAt: new Date() };
     if (existing) await prisma.outreach.update({ where: { id: existing.id }, data });
     else await prisma.outreach.create({ data: { tenantId, organizationId, ...data } });
     return;
@@ -198,7 +204,7 @@ export async function runQualify(organizationId: string, jobTenantId?: string) {
       } else if (error instanceof ApiError && ["network", "timeout"].includes(error.code)) {
         // Нет связи с OpenRouter (обычно умер прокси). Не стопорим конвейер: карточка по данным, стоп-правило действует.
         // Интеграция помечается ошибкой — следующие карточки не ждут таймаута, а в ленте видно предупреждение.
-        await prisma.integration.updateMany({ where: { tenantId, provider: "openrouter" }, data: { status: "error", lastError: "Нет связи с OpenRouter: прокси не отвечает. Проверьте OPENROUTER_PROXY_URL и нажмите «Проверить» в интеграциях.", lastCheckedAt: new Date() } });
+        await prisma.integration.updateMany({ where: { tenantId, provider: "openrouter" }, data: { status: "error", lastError: `Нет связи с OpenRouter: ${error.message}. Впишите прокси в «Охота» → шестерёнка → AI-скоринг и нажмите «Обновить».`, lastCheckedAt: new Date() } });
         aiNote = "AI недоступен (нет связи с OpenRouter) — карточка собрана по данным источника. Перезапустите скоринг, когда связь вернётся.";
         model = null;
       } else throw error;
@@ -207,7 +213,9 @@ export async function runQualify(organizationId: string, jobTenantId?: string) {
     aiNote = "OpenRouter не подключён — карточка собрана только из данных источника.";
   }
 
-  const card = buildCard(facts, ai);
+  // Карточку перечитываем перед сборкой: человек мог добавить факт, пока шли скан сайта и AI.
+  const latest = await prisma.outreach.findUnique({ where: { organizationId }, select: { card: true } });
+  const card = keepManualFacts(latest?.card as unknown as ObservationCard | null, buildCard(facts, ai));
   const scored = strategyScore(card, ai);
   const data = {
     segment: card.segment,
@@ -225,6 +233,8 @@ export async function runQualify(organizationId: string, jobTenantId?: string) {
     const row = existing
       ? await tx.outreach.update({ where: { id: existing.id }, data })
       : await tx.outreach.create({ data: { tenantId, organizationId, ...data } });
+    // Балл охоты виден и в CRM: сортировка, фильтры кампаний и правила автоматизации читают Organization.leadScore.
+    await tx.organization.update({ where: { id: organizationId }, data: { leadScore: scored.score } });
     await tx.leadScore.create({
       data: {
         tenantId,
@@ -252,6 +262,33 @@ async function sweepStuck(tenantId: string) {
   for (const row of stale) {
     if (!(await hasLiveQualifyJob(tenantId, row.organizationId))) await markQualifyFailed(row.organizationId, "Квалификация не завершилась. Запустите ещё раз.");
   }
+}
+
+/* ───────────── Сети с несколькими точками ───────────── */
+
+const chainKey = (org: { name: string; city: string | null }) => `${org.name.trim().toLowerCase().replace(/ё/g, "е")}|${(org.city ?? "").toLowerCase()}`;
+
+/** Сети, где уже идёт диалог с одной из точек: остальным точкам не пишем — это тот же владелец. */
+async function contactedChains(tenantId: string, orgs: { name: string; city: string | null }[]) {
+  if (!orgs.length) return new Set<string>();
+  const names = [...new Set(orgs.map((org) => org.name))];
+  const rows = await prisma.outreach.findMany({
+    where: { tenantId, status: { notIn: ["new", "snoozed", "rejected"] }, organization: { name: { in: names, mode: "insensitive" } } },
+    select: { organization: { select: { name: true, city: true } } },
+  });
+  return new Set(rows.map((row) => chainKey(row.organization)));
+}
+
+/** Одна карточка на сеть: оставляем лучшую (список уже отсортирован), точки сетей в диалоге убираем. */
+async function onePerChain<T extends { organization: { name: string; city: string | null } }>(tenantId: string, rows: T[]) {
+  const contacted = await contactedChains(tenantId, rows.map((row) => row.organization));
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const key = chainKey(row.organization);
+    if (contacted.has(key) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /* ───────────── Лента «Сегодня» ───────────── */
@@ -313,6 +350,9 @@ export async function today(tenantId: string, limit = 20) {
     prisma.outreach.count({ where: reviewWhere }),
   ]);
   const blocked = await suppressedOrgIds(tenantId, [...rows, ...reviewRows]);
+  const [chainRows, chainReview] = await Promise.all([onePerChain(tenantId, rows), onePerChain(tenantId, reviewRows)]);
+  const keep = new Set([...chainRows, ...chainReview].map((row) => row.id));
+  for (const row of [...rows, ...reviewRows]) if (!keep.has(row.id)) blocked.add(row.organizationId);
   const ai = await prisma.integration.findUnique({ where: { tenantId_provider: { tenantId, provider: "openrouter" } }, select: { status: true, lastError: true } });
   const aiReady = await isReady(tenantId, "openrouter");
   return {
@@ -409,6 +449,12 @@ export async function decide(tenantId: string, actorId: string, id: string, inpu
   if (!result.count) throw new ApiError(409, "Карточку уже обработали на другом устройстве.", "conflict");
   if (input.action === "approve") await moveLead(tenantId, row.organizationId, "ready_to_contact", actorId);
   if (input.action === "reject") await activity({ tenantId, organizationId: row.organizationId, actorId, type: "outreach.rejected", message: `Отклонено: ${input.reason || "без причины"}` });
+  if (input.action === "snooze") await activity({ tenantId, organizationId: row.organizationId, actorId, type: "outreach.snoozed", message: `Отложено на ${input.days ?? 3} дн.` });
+  if (input.action === "undo") {
+    await activity({ tenantId, organizationId: row.organizationId, actorId, type: "outreach.undo", message: "Решение по карточке отменено — снова в ленте" });
+    // Отмена «Взять в работу» возвращает и стадию лида, иначе CRM показывает «готов к контакту» у карточки из ленты.
+    if (row.status === "approved") await moveLead(tenantId, row.organizationId, "new", actorId).catch(() => undefined);
+  }
   await queueSheet(tenantId, "outreach", id);
   return { ok: true };
 }
@@ -582,6 +628,8 @@ export async function setStatus(tenantId: string, actorId: string, id: string, i
   const row = await owned(tenantId, id);
   const flow = STATUS_FLOW[input.status];
   if (!flow.from.includes(row.status)) throw new ApiError(409, `Из статуса «${row.status}» нельзя перейти в «${flow.label}».`, "bad_transition");
+  // «Просит не писать» — окончательно: такой лид нельзя вернуть в работу случайным нажатием.
+  if (row.rejectReason === "Просит не писать" && input.status !== "optout") throw new ApiError(409, "Лид просил не писать — его нельзя вернуть в работу.", "opted_out");
   // Проект создаётся до смены статуса: если создание упадёт, статус не изменится и повтор сработает. Создание идемпотентно.
   // Этап проекта следует за лидом: «Смета» → смета, «Сделка» → договор и аванс (§3, шаг 12 стратегии).
   let projectId: string | null = row.project?.id ?? null;
@@ -710,9 +758,11 @@ export async function nextItem(tenantId: string, excludeId?: string | null) {
   const now = new Date();
   const base = { tenantId, organization: contactableOrg, ...(excludeId ? { id: { not: excludeId } } : {}) } satisfies Prisma.OutreachWhereInput;
   const pick = async (where: Prisma.OutreachWhereInput) => {
-    const rows = await prisma.outreach.findMany({ where, orderBy: [{ priority: "asc" }, { score: "desc" }], take: 10, select: { id: true, organizationId: true, organization: { select: { contacts: { select: { value: true } } } } } });
+    const rows = await prisma.outreach.findMany({ where, orderBy: [{ priority: "asc" }, { score: "desc" }], take: 20, select: { id: true, organizationId: true, status: true, organization: { select: { name: true, city: true, contacts: { select: { value: true } } } } } });
     const blocked = await suppressedOrgIds(tenantId, rows);
-    return rows.find((row) => !blocked.has(row.organizationId)) ?? null;
+    const contacted = await contactedChains(tenantId, rows.map((row) => row.organization));
+    // В работе («approved») сеть ещё не в диалоге — её точку показываем; новые точки сети, где уже пишем, пропускаем.
+    return rows.find((row) => !blocked.has(row.organizationId) && (row.status === "approved" || !contacted.has(chainKey(row.organization)))) ?? null;
   };
   const approved = await pick({ ...base, status: "approved" });
   if (approved) return { id: approved.id, kind: "write" as const };
