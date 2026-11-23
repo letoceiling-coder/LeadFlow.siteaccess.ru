@@ -8,20 +8,35 @@ import { post, useLive } from "./data";
 import { Button, Chip, Field, Notice, Segmented, Sheet, cx, errorText, inputClass, useToast } from "./ui";
 import { dayLabel } from "./types";
 import { BestQueries } from "./insights";
+import { HUNT_CITIES, HUNT_NICHES, collectEtaMinutes, parseHuntQuery } from "@/lib/domain/hunt-query";
 
 type Template = { id: string; name: string; params: { city: string; category: string; searchQuery?: string; maxResults: number } };
-type Search = { id: string; city: string; category: string; requested: number | null; status: string; syncedAt: string | null; createdAt: string; error: string | null; received: number | null; funnel: { incomplete: number; noFact: number; review: number; ready: number; queued: number } | null };
+type Search = { id: string; city: string; category: string; requested: number | null; status: string; syncedAt: string | null; createdAt: string; error: string | null; received: number | null; stage?: string | null; collected?: number | null; funnel: { incomplete: number; noFact: number; review: number; ready: number; queued: number } | null };
 
-/** Категории под активный контур стратегии: доставка еды и автосервисы, плюс мастера. */
-const CATEGORIES = ["Доставка еды", "Суши-бар", "Пиццерия", "Автосервис", "Шиномонтаж", "Натяжные потолки", "Стоматология", "База отдыха"];
 const TASK_STATUS: Record<string, string> = { queued: "в очереди", running: "идёт", completed: "готово", failed: "ошибка", cancelled: "отменён" };
 
 export function SearchPanel({ open }: { open: boolean }) {
   const { close, refresh, version } = useHunt();
   const toast = useToast();
-  const [city, setCity] = useState("Краснодар");
-  const [category, setCategory] = useState("Доставка еды");
-  const [size, setSize] = useState<"20" | "50" | "100">("50");
+  const [task, setTask] = useState("");
+  const [cities, setCities] = useState<string[]>(["Ростов-на-Дону"]);
+  const [category, setCategory] = useState("Автосервис");
+  const [size, setSize] = useState<"20" | "50" | "100" | "200">("50");
+  const city = cities.join(", ");
+  function applyTask(value: string) {
+    setTask(value);
+    const parsed = parseHuntQuery(value);
+    if (parsed.cities.length) setCities(parsed.cities);
+    if (parsed.category) setCategory(parsed.category);
+    if (parsed.count) setSize(parsed.count >= 150 ? "200" : parsed.count >= 75 ? "100" : parsed.count >= 35 ? "50" : "20");
+  }
+  function toggleCity(name: string) {
+    setCities((list) => (list.includes(name) ? list.filter((item) => item !== name) : [...list, name]));
+  }
+  /** Каждый город — отдельный сбор: парсер раздаёт их по своим компьютерам параллельно. */
+  async function launchAll() {
+    for (const name of cities) await launch({ city: name, category: category.trim(), maxResults: Number(size) });
+  }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const templates = useLive<Template[]>(open ? "/api/parser/templates" : null, version);
@@ -65,9 +80,9 @@ export function SearchPanel({ open }: { open: boolean }) {
   }
 
   async function savePreset() {
-    if (!city.trim() || !category.trim()) return;
+    if (!cities.length || !category.trim()) return;
     try {
-      await post("/api/parser/templates", { name: `${category.trim()} · ${city.trim()}`, params: { city: city.trim(), category: category.trim(), searchQuery: "", maxResults: Number(size) } });
+      await post("/api/parser/templates", { name: `${category.trim()} · ${cities[0]}`, params: { city: cities[0], category: category.trim(), searchQuery: "", maxResults: Number(size) } });
       await templates.reload();
       toast({ text: "Пресет сохранён" });
     } catch (reason) {
@@ -81,7 +96,7 @@ export function SearchPanel({ open }: { open: boolean }) {
       onClose={close}
       title="Новый поиск"
       subtitle="Яндекс Карты → скоринг по стратегии → лента «Сегодня»"
-      footer={<Button variant="accent" size="lg" className="w-full" pending={busy} disabled={!city.trim() || !category.trim()} onClick={() => launch({ city: city.trim(), category: category.trim(), maxResults: Number(size) })}><Play className="h-5 w-5" /> Искать</Button>}
+      footer={<Button variant="accent" size="lg" className="w-full" pending={busy} disabled={!cities.length || !category.trim()} onClick={launchAll}><Play className="h-5 w-5" /> Искать{cities.length > 1 ? ` в ${cities.length} городах` : ""} · ~{collectEtaMinutes(Number(size))} мин</Button>}
     >
       <div className="space-y-6">
         {error ? <Notice tone="error">{error}</Notice> : null}
@@ -92,14 +107,24 @@ export function SearchPanel({ open }: { open: boolean }) {
           </Notice>
         ) : null}
         <div className="space-y-4">
-          <Field label="Город"><input className={inputClass} value={city} onChange={(event) => setCity(event.target.value)} /></Field>
-          <Field label="Что ищем"><input className={inputClass} value={category} onChange={(event) => setCategory(event.target.value)} placeholder="Например, доставка еды" /></Field>
-          <div className="flex flex-wrap gap-2">
-            {CATEGORIES.map((item) => <Chip key={item} active={category === item} onClick={() => setCategory(item)}>{item}</Chip>)}
-          </div>
-          <Field label="Сколько карточек">
-            <Segmented value={size} onChange={setSize} items={[{ key: "20", label: "20" }, { key: "50", label: "50" }, { key: "100", label: "100" }]} />
+          <Field label="Задание агенту">
+            <input className={inputClass} value={task} onChange={(event) => applyTask(event.target.value)} placeholder="автосервисы Ростов и Краснодар 50" enterKeyHint="search" />
           </Field>
+          <p className="-mt-2 text-xs text-[var(--h-faint)]">Напишите или надиктуйте с клавиатуры: ниша, города, сколько. Поля ниже заполнятся сами.</p>
+          <Field label="Ниша"><input className={inputClass} value={category} onChange={(event) => setCategory(event.target.value)} placeholder="Например, доставка еды" /></Field>
+          <div className="flex flex-wrap gap-2">
+            {HUNT_NICHES.map((item) => <Chip key={item.label} active={category === item.label} onClick={() => setCategory(item.label)}>{item.label}</Chip>)}
+          </div>
+          <div>
+            <div className="mb-2 text-sm font-medium text-[var(--h-muted)]">Города{cities.length ? `: ${city}` : ""}</div>
+            <div className="flex flex-wrap gap-2">
+              {HUNT_CITIES.map((item) => <Chip key={item} active={cities.includes(item)} onClick={() => toggleCity(item)}>{item}</Chip>)}
+            </div>
+          </div>
+          <Field label="Сколько карточек на город">
+            <Segmented value={size} onChange={setSize} items={[{ key: "20", label: "20" }, { key: "50", label: "50" }, { key: "100", label: "100" }, { key: "200", label: "200" }]} />
+          </Field>
+          <p className="text-xs text-[var(--h-faint)]">Сбор берёт всё с карты: телефоны, мессенджеры, прайс, отзывы. Потом каждый сайт открывается и проверяется, карточки проходят скоринг. Парсер делает паузы против капчи — около 20 секунд на карточку.</p>
           <button onClick={savePreset} className="inline-flex items-center gap-1.5 text-sm text-[var(--h-accent)]"><Bookmark className="h-4 w-4" /> Сохранить как пресет</button>
         </div>
 
@@ -138,6 +163,7 @@ export function SearchPanel({ open }: { open: boolean }) {
                         {saving ? "сохраняем" : TASK_STATUS[task.status] ?? task.status}
                       </span>
                     </div>
+                    {task.stage ? <div className="mt-1 text-xs text-[var(--h-accent)]">{task.stage}</div> : null}
                     <div className="mt-1 text-xs text-[var(--h-faint)]">
                       {dayLabel(task.createdAt)}{task.received != null ? ` · пришло ${task.received}${task.requested ? ` из ${task.requested}` : ""}` : ""}{task.error ? ` · ${task.error}` : ""}
                     </div>

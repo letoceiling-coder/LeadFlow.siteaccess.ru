@@ -8,7 +8,7 @@ export async function middleware(request: NextRequest) {
   const token = request.cookies.get("lf_session")?.value;
   const payload = token ? await readSessionToken(token) : null;
   const isAuthPage = pathname === "/login" || pathname === "/register" || pathname.startsWith("/invite");
-  const isOptOut = pathname.startsWith("/opt-out/");
+  const isOptOut = pathname.startsWith("/opt-out/") || pathname.startsWith("/kp/");
   const isPublicMail = pathname.startsWith("/brand/") || pathname.startsWith("/media/offers/");
   if (!payload && !isAuthPage && !isOptOut && !isPublicMail && !pathname.startsWith("/api")) {
     return NextResponse.redirect(new URL("/login", request.url));

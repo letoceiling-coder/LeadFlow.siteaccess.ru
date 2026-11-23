@@ -67,6 +67,24 @@ export class ParserClient {
     return this.call(`/api/v1/organizations/categories?${query.toString()}`);
   }
 
+  /** HTML страницы через браузер парсера (синхронно, до ~45 с). Нужен для скана сайта лида. */
+  pageHtml(url: string, idempotencyKey: string) {
+    return this.call("/api/v1/page/html", { method: "POST", body: JSON.stringify({ url, includeText: true, absoluteUrls: true, stripScripts: true, maxBytes: 1500000 }), headers: { "Idempotency-Key": idempotencyKey }, timeoutMs: 70000 }, [200, 201, 202]);
+  }
+
+  /** Массовый сбор организаций: промпт или город + категория, до 500 карточек, со всеми полями. */
+  collect(body: Record<string, unknown>, idempotencyKey: string) {
+    return this.call("/api/v1/organizations/collect", { method: "POST", body: JSON.stringify(body), headers: { "Idempotency-Key": idempotencyKey } }, [200, 201, 202]);
+  }
+
+  collectStatus(id: string) {
+    return this.call(`/api/v1/organizations/collect/${encodeURIComponent(id)}`);
+  }
+
+  collectResult(id: string) {
+    return this.call(`/api/v1/organizations/collect/${encodeURIComponent(id)}/result`, { timeoutMs: 60000 });
+  }
+
   workers() {
     return this.call("/api/v1/workers");
   }

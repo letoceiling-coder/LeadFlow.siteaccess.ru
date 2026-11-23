@@ -64,8 +64,40 @@ function strings(value: unknown): string[] {
   return Array.from(new Set(result));
 }
 
+/** Ссылки на мессенджеры и соцсети: массив объектов {url,type}, словарь {telegram: url} или массив строк. */
+function links(...values: unknown[]): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item === "string" && /^https?:\/\//i.test(item.trim())) out.push(item.trim());
+        else if (asRecord(item) && typeof asRecord(item)!.url === "string") out.push(String(asRecord(item)!.url).trim());
+      }
+    } else if (asRecord(value)) {
+      for (const item of Object.values(asRecord(value)!)) if (typeof item === "string" && /^https?:\/\//i.test(item.trim())) out.push(item.trim());
+    }
+  }
+  // wa.me/+7… и wa.me/7… — один и тот же номер.
+  const seen = new Set<string>();
+  return out.filter((url) => {
+    const key = url.toLowerCase().replace(/\/\+/, "/").replace(/\/$/, "");
+    return seen.has(key) ? false : (seen.add(key), true);
+  });
+}
+
+/** Прайс с карт: «Название — 3 500 ₽». */
+function productLines(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => asRecord(item))
+    .filter((item): item is Record<string, unknown> => Boolean(item && text(item.name)))
+    .map((item) => (text(item.price) ? `${text(item.name)} — ${text(item.price)}` : text(item.name)!))
+    .slice(0, 40);
+}
+
 function photosCount(source: Record<string, unknown>): number | null {
   if (typeof source.photoCount === "number") return source.photoCount;
+  if (typeof source.photosCount === "number") return source.photosCount;
   if (Array.isArray(source.photos)) return source.photos.length;
   if (Array.isArray(source.images)) return source.images.length;
   return null;
@@ -102,9 +134,9 @@ export function mapParserOrganization(input: unknown): MappedOrganization | null
     lon: number(coordinates?.lon ?? coordinates?.lng),
     phones,
     emails,
-    socials: strings(source.socials ?? source.socialLinks),
-    services: strings(source.services),
-    features: strings(source.features),
+    socials: links(source.socials, source.socialLinks, source.messagingLinks, source.additionalContacts),
+    services: Array.from(new Set([...productLines(source.products), ...strings(source.services)])).slice(0, 60),
+    features: Array.from(new Set([...strings(source.features), ...strings(source.amenities)])).slice(0, 40),
     hours: source.workingHours ?? source.hours ?? null,
     description: text(source.description),
     legalName: text(source.legalName) || text(source.companyName),

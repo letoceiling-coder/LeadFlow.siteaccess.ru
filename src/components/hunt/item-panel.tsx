@@ -34,7 +34,26 @@ type Item = {
   links: ContactLink[];
   projectId: string | null;
   lastChannel: string | null;
+  site: { ok: boolean; error: string | null; viewport: boolean; booking: boolean; cart: boolean; prices: boolean; form: boolean; https: boolean; builder: string | null; copyrightYear: number | null; emails: string[]; links: { kind: string }[]; scannedAt: string } | null;
+  proposal: { url: string; text: string; title: string; ai: boolean; createdAt: string } | null;
 };
+
+function SiteScanRow({ site }: { site: NonNullable<Item["site"]> }) {
+  if (!site.ok) return <Notice tone="warn">Сайт не открылся при проверке{site.error ? `: ${site.error.slice(0, 80)}` : ""}.</Notice>;
+  const marks: [string, boolean][] = [["Адаптив", site.viewport], ["Запись", site.booking], ["Корзина", site.cart], ["Цены", site.prices], ["Форма", site.form], ["https", site.https]];
+  const found = site.emails.length + site.links.length;
+  return (
+    <div className="glass rounded-2xl p-3.5">
+      <div className="mb-2 flex items-baseline justify-between text-sm"><span className="font-medium">Сайт проверен</span><span className="text-xs text-[var(--h-faint)]">{dayLabel(site.scannedAt)}</span></div>
+      <div className="flex flex-wrap gap-1.5 text-xs">
+        {marks.map(([label, ok]) => <span key={label} className={cx("rounded-full px-2 py-0.5", ok ? "bg-[rgba(59,224,138,0.14)] text-[#8ff0bd]" : "bg-[rgba(255,100,100,0.14)] text-[#ff9b9b]")}>{ok ? "✓" : "✗"} {label}</span>)}
+        {site.builder ? <span className="rounded-full bg-white/10 px-2 py-0.5">конструктор {site.builder}</span> : null}
+        {site.copyrightYear ? <span className="rounded-full bg-white/10 px-2 py-0.5">© {site.copyrightYear}</span> : null}
+      </div>
+      {found ? <p className="mt-2 text-xs text-[var(--h-muted)]">С сайта добавлено контактов: {found}{site.emails.length ? ` (почта: ${site.emails.join(", ")})` : ""}</p> : null}
+    </div>
+  );
+}
 
 const CHANNELS = [
   { key: "telegram", label: "Telegram" },
@@ -239,6 +258,15 @@ export function ItemPanel({ id }: { id: string | null }) {
     await goNext(result.next ? `Напоминание отмечено, следующее ${dayLabel(result.next)}` : "Три напоминания без ответа — в «спящих»");
   }
 
+  async function buildProposal() {
+    if (!data) return;
+    const result = await run(() => post<{ url: string }>(`/api/hunt/${data.id}/proposal`, {}));
+    if (result) {
+      toast({ text: "КП готово", action: { label: "Открыть", run: () => window.open(result.url, "_blank") } });
+      await item.reload();
+    }
+  }
+
   async function setStatus(next: string) {
     if (!data) return;
     if (next === "optout" && !window.confirm("Контакт попадёт в стоп-лист, писать ему больше будет нельзя. Продолжить?")) return;
@@ -306,6 +334,8 @@ export function ItemPanel({ id }: { id: string | null }) {
             <button className="glass inline-flex h-9 items-center rounded-full px-3.5 text-sm" onClick={() => setShowFactors((value) => !value)}>{showFactors ? "Скрыть баллы" : "Из чего баллы"}</button>
             {data.projectId ? <button className="tint-yellow inline-flex h-9 items-center gap-1.5 rounded-full border px-3.5 text-sm" onClick={() => open("project", data.projectId!, true)}><FolderKanban className="h-4 w-4" /> Проект</button> : null}
           </div>
+
+          {data.site ? <SiteScanRow site={data.site} /> : null}
 
           {showFactors && data.factors ? (
             <ul className="glass space-y-1.5 rounded-2xl p-4 text-sm">
@@ -378,6 +408,30 @@ export function ItemPanel({ id }: { id: string | null }) {
           ) : null}
 
           {data.actionDue ? <Notice tone="warn">Срок следующего шага по диалогу — сегодня. Ответьте клиенту или отметьте, что дальше.</Notice> : null}
+
+          {["replied", "demo", "call", "estimate", "won"].includes(data.status) ? (
+            <section className="tint-yellow space-y-3 rounded-2xl border p-4">
+              <div className="flex items-baseline justify-between gap-3">
+                <h3 className="text-lg font-semibold">КП-презентация</h3>
+                {data.proposal ? <span className="text-xs text-[var(--h-muted)]">{data.proposal.ai ? "AI · " : ""}{dayLabel(data.proposal.createdAt)}</span> : null}
+              </div>
+              {data.proposal ? (
+                <>
+                  <p className="text-sm text-[var(--h-muted)]">{data.proposal.title}. Три варианта с ценами, факты о бизнесе, этапы и кнопки связи. Клиент открывает по ссылке, вы видите, что он открыл.</p>
+                  <div className="flex flex-wrap gap-2">
+                    <a href={data.proposal.url} target="_blank" rel="noreferrer" className="glass inline-flex h-11 items-center gap-1.5 rounded-full px-4 text-[15px]">Открыть <ExternalLink className="h-4 w-4" /></a>
+                    <Button size="md" variant="light" onClick={() => navigator.clipboard.writeText(data.proposal!.text).then(() => toast({ text: "Текст со ссылкой на КП скопирован" })).catch(() => toast({ text: "Скопируйте вручную", tone: "error" }))}><Copy className="h-4 w-4" /> Текст со ссылкой</Button>
+                    <Button size="md" pending={busy} onClick={buildProposal}><Sparkles className="h-4 w-4" /> Пересобрать</Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-[var(--h-muted)]">Собирается сразу после ответа клиента: вилка цен по нише, что увидели у бизнеса, этапы. Если не появилось — соберите вручную.</p>
+                  <Button size="md" variant="light" pending={busy} onClick={buildProposal}><Sparkles className="h-4 w-4" /> Собрать КП</Button>
+                </>
+              )}
+            </section>
+          ) : null}
 
           {["replied", "demo", "call"].includes(data.status) ? (
             <section>

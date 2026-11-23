@@ -12,6 +12,7 @@ import { runAgentTurn } from "../services/agent";
 import { markQualifyFailed, runQualify } from "../services/hunt";
 import { runSheetFull, runSheetPush } from "../services/sheets";
 import { deliverWebhook } from "../services/projects";
+import { generateProposal } from "../services/proposals";
 
 type JobRow = { id: string; tenantId: string; type: string; payload: unknown; cancelRequested: boolean };
 
@@ -52,7 +53,8 @@ export async function processJob(job: JobRow) {
       if (!existing) throw new FatalJobError("Задача поиска не найдена");
       await refreshParserTask(existing.tenantId, existing.id);
       const fresh = await prisma.parserTask.findUnique({ where: { id: existing.id } });
-      if (fresh && !["completed", "failed", "cancelled"].includes(fresh.status)) throw new RetryableError("Поиск ещё выполняется.", 5000);
+      // Массовый сбор идёт минутами (паузы против капчи) — опрашиваем реже.
+      if (fresh && !["completed", "failed", "cancelled"].includes(fresh.status)) throw new RetryableError("Поиск ещё выполняется.", fresh.type === "organizations.collect" ? 15000 : 5000);
       if (fresh?.status === "completed" && !fresh.syncedAt) throw new RetryableError("Результаты ещё сохраняются.", 4000);
     }
     else if (job.type === "parser.sync") await runSync(String(data.syncRunId));
@@ -83,6 +85,7 @@ export async function processJob(job: JobRow) {
     // Пространство берётся из самой задачи, а не из payload: задача не может тронуть чужие данные.
     else if (job.type === "sheets.push") await runSheetPush(String(data.kind), String(data.id), job.tenantId);
     else if (job.type === "sheets.full") await runSheetFull(job.tenantId);
+    else if (job.type === "hunt.proposal") await generateProposal(String(data.outreachId), job.tenantId);
     else if (job.type === "project.webhook") await deliverWebhook(String(data.projectId), String(data.event), job.tenantId);
     else throw new FatalJobError(`Неизвестный тип задачи ${job.type}`);
     await finishJob(job.id, { ok: true });

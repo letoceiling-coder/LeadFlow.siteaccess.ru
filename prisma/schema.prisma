@@ -125,6 +125,7 @@ model Organization {
   websiteStatus      String    @default("UNCERTAIN")
   websiteCheckedAt   DateTime?
   websiteCheckNote   String?
+  siteScan           Json?
   rating             Float?
   reviewCount        Int?
   photoCount         Int?
@@ -880,6 +881,9 @@ model Outreach {
   followUpStep   Int          @default(0)
   nextFollowUpAt DateTime?
   repliedAt      DateTime?
+  proposal       Json?
+  proposalToken  String?      @unique
+  proposalAt     DateTime?
   qualifiedAt    DateTime?
   sheetSyncedAt  DateTime?
   project        Project?

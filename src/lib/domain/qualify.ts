@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { detectSegment, isSegment, segmentInfo, type SegmentId } from "./segments";
+import { siteChaos as scanChaos, siteIsGood, type SiteScan } from "./site-scan";
 
 /** Квалификация по стратегии NEEKLO v2: скоринг §4 и карточка наблюдения §5. */
 
@@ -44,6 +45,10 @@ export type QualifyFacts = {
   phones: string[];
   emails: string[];
   socials: string[];
+  /** Скан сайта через парсер: что реально есть на странице. */
+  site?: SiteScan | null;
+  /** Тексты свежих отзывов с карт — в них клиенты сами пишут, где теряются заявки. */
+  reviews?: string[];
 };
 
 export type CardFact = { text: string; source: string; kind: "fact" | "assumption" };
@@ -68,6 +73,8 @@ export type ObservationCard = {
   contact: { kind: string; value: string }[];
   features: string[];
   chain?: boolean;
+  /** По скану: сайт уже хороший (адаптив, запись или корзина) — продавать сайт поздно. */
+  goodSite?: boolean;
 };
 
 export type StrategyFactor = { key: string; label: string; points: number; hit: boolean; reason: string };
@@ -87,8 +94,8 @@ export function allowedSources(facts: QualifyFacts): Set<string> {
 
 /** Из каких полей можно брать факт каждого вида. name, city, category фактом денег или хаоса быть не могут. */
 const SOURCES = {
-  money: new Set(["reviewCount", "rating", "services", "description", "features", "photoCount"]),
-  chaos: new Set(["websiteStatus", "website", "socials", "phones", "emails", "description", "features"]),
+  money: new Set(["reviewCount", "rating", "services", "description", "features", "photoCount", "reviews"]),
+  chaos: new Set(["websiteStatus", "website", "socials", "phones", "emails", "description", "features", "site", "reviews"]),
   growth: new Set(["description", "features", "services", "reviewCount"]),
 } as const;
 
@@ -187,6 +194,20 @@ export function buildCard(facts: QualifyFacts, ai: QualifyResult | null): Observ
   const aiSegment = ai?.segment && isSegment(ai.segment) ? ai.segment : null;
   const segment = aiSegment ?? detectSegment(facts.category, facts.categories);
 
+  // Хаос из отзывов: клиенты сами пишут, что не дозвониться или не перезвонили — это потерянные заявки.
+  const complaint = reviewComplaint(facts.reviews ?? []);
+  if (complaint && !chaos.some((item) => item.source === "reviews")) chaos.unshift({ text: complaint, source: "reviews", kind: "fact" });
+  const priced = facts.services.filter((item) => /\d\s?₽|руб/.test(item)).length;
+  if (priced >= 5 && !growth.some((item) => item.source === "services")) growth.push({ text: `Прайс на картах: ${priced} услуг с ценами`, source: "services", kind: "fact" });
+
+  // Хаос со страницы сайта: открыли её через парсер и проверили запись, корзину, цены, адаптив.
+  if (facts.site) {
+    for (const text of scanChaos(facts.site, segment)) {
+      if (chaos.length >= 5) break;
+      if (!chaos.some((item) => item.text.toLowerCase() === text.toLowerCase())) chaos.push({ text, source: "site", kind: "fact" });
+    }
+  }
+
   let calc: ObservationCard["calc"] = null;
   if (ai?.avgCheckRub && ai?.lostPerMonth) {
     const lostRub = Math.round(ai.avgCheckRub * ai.lostPerMonth);
@@ -214,7 +235,22 @@ export function buildCard(facts: QualifyFacts, ai: QualifyResult | null): Observ
     contact: contactsOf(facts),
     features: ai?.features ?? [],
     chain: isFederalChain(facts.name, facts.phones),
+    goodSite: siteIsGood(facts.site),
   };
+}
+
+const COMPLAINTS: [RegExp, string][] = [
+  [/не дозвон|невозможно дозвон|трубку не бер|не берут трубк|не брали трубк|не отвечают на звон|телефон не отвеча/i, "В отзывах пишут, что к вам трудно дозвониться"],
+  [/не перезвонил|не перезвонили|обещали перезвонить|так и не позвонил/i, "В отзывах пишут, что обещали перезвонить и не перезвонили"],
+  [/долго (?:не )?отвеча|не ответили на сообщ|сообщения игнор|в ватсап[еп]? не отвеч|в whatsapp не отвеч/i, "В отзывах жалуются, что долго отвечают на сообщения"],
+  [/запис(?:ь|аться) (?:только )?по телефону|не смог(?:ла)? записаться|сложно записаться|негде записаться/i, "В отзывах пишут, что записаться можно только по телефону"],
+  [/долго ждал[аи]? заказ|заказ (?:привезли|доставили) через|опоздал[аи]? с доставк|перепутали заказ/i, "В отзывах жалуются на заказы: путаница или долгая доставка"],
+];
+
+/** Первая жалоба из отзывов, которая говорит о потерянных заявках. Текст — наш пересказ, без цитаты. */
+export function reviewComplaint(reviews: string[]): string | null {
+  for (const [re, text] of COMPLAINTS) if (reviews.some((review) => re.test(review))) return text;
+  return null;
 }
 
 export function rub(value: number) {
@@ -239,7 +275,7 @@ export function strategyScore(card: ObservationCard, ai: QualifyResult | null) {
   push("growth", "Признаки роста", 10, card.growth.length > 0, card.growth.map((item) => item.text).join("; ") || "Не найдено");
   push("case", "Есть кейс NEEKLO", 10, Boolean(card.caseRef), card.caseRef ?? "Кейса под эту нишу нет");
   push("micro", "Микробизнес", -30, ai?.microBusiness === true, "Похоже на микробизнес без оборота");
-  push("goodSite", "Уже есть хороший сайт", -40, ai?.goodSiteAlready === true, "Есть сайт с формой, записью или каталогом");
+  push("goodSite", "Уже есть хороший сайт", -40, ai?.goodSiteAlready === true || card.goodSite === true, "Есть сайт с формой, записью или каталогом");
   push("noContact", "Нет контакта", -15, !hasContact, "Нет публичного контакта");
   push("irrelevant", "Нерелевант или спам", -50, ai?.irrelevant === true, "Карточка нерелевантна");
   push("chain", "Федеральная сеть", -70, card.chain === true, "Номер 8-800 или известная сеть — свой IT-отдел, не клиент студии");

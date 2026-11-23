@@ -26,7 +26,8 @@ export async function createSearch(tenantId: string, userId: string, input: Sear
     throw new ApiError(409, "Поиск больше 200 организаций нужно подтвердить ещё раз.", "confirm_required");
   }
   const integration = await requireReady(tenantId, "parser", "Поиск организаций");
-  const keyBase = ["yandex.orgs", normalize(input.city), normalize(input.category), normalize(input.searchQuery), input.maxResults, input.includePhotos].join(":");
+  // Массовый сбор (organizations/collect): все поля карточки — мессенджеры, прайс, отзывы, ИНН — и до 500 карточек за раз.
+  const keyBase = ["collect", normalize(input.city), normalize(input.category), normalize(input.searchQuery), input.maxResults, input.includePhotos].join(":");
   if (!input.force) {
     const existing = await prisma.parserTask.findFirst({
       where: {
@@ -42,7 +43,7 @@ export async function createSearch(tenantId: string, userId: string, input: Sear
   const task = await prisma.parserTask.create({
     data: {
       tenantId,
-      type: "yandex.orgs",
+      type: "organizations.collect",
       input: input as unknown as Prisma.InputJsonValue,
       idempotencyKey: input.force ? `${keyBase}:retry:${Date.now()}` : keyBase,
       createdById: userId,
@@ -69,6 +70,24 @@ export async function submitParserTask(taskId: string, ready?: Awaited<ReturnTyp
   if (task.externalId) return task;
   const integration = ready ?? (await requireReady(task.tenantId, "parser", "Поиск организаций"));
   const input = task.input as Record<string, unknown>;
+  if (task.type === "organizations.collect") {
+    const body = (await clientFrom(integration).collect(
+      {
+        city: input.city,
+        category: input.category,
+        ...(input.searchQuery ? { query: input.searchQuery } : {}),
+        count: input.maxResults,
+        fields: "all_available",
+        includePhotos: false,
+        normalizeWithLlm: true,
+        maxCostUsd: 0.3,
+        priority: 5,
+      },
+      task.id.replace(/[^A-Za-z0-9._:-]/g, "").slice(0, 120),
+    )) as { taskId?: string; status?: { status?: string; progress?: number } };
+    if (!body.taskId) throw new ApiError(502, "Парсер не вернул номер сбора.", "parser_shape");
+    return prisma.parserTask.update({ where: { id: task.id }, data: { externalId: body.taskId, status: body.status?.status || "queued", progress: body.status?.progress ?? 0, startedAt: new Date() } });
+  }
   const payload =
     task.type === "yandex.orgs"
       ? {
@@ -102,6 +121,22 @@ export async function refreshParserTask(tenantId: string, id: string) {
   if (!task.externalId) return task;
   if (["failed", "cancelled"].includes(task.status) || (task.status === "completed" && task.syncedAt)) return task;
   const integration = await requireReady(tenantId, "parser", "Обновление задачи");
+  if (task.type === "organizations.collect") {
+    const st = (await clientFrom(integration).collectStatus(task.externalId)) as { status?: string; stage?: string; stageLabel?: string; progress?: number; message?: string; counters?: Record<string, number>; error?: string | null; etaSeconds?: number | null; eta?: unknown };
+    const status = st.status === "done" ? "completed" : st.status || task.status;
+    const updatedCollect = await prisma.parserTask.update({
+      where: { id: task.id },
+      data: {
+        status,
+        progress: st.progress ?? task.progress,
+        error: st.error ? String(st.error).slice(0, 500) : null,
+        resultSummary: { stage: st.stage ?? null, stageLabel: st.stageLabel ?? null, message: st.message ?? null, counters: (st.counters ?? null) as Prisma.InputJsonValue, eta: (st.etaSeconds ?? null) as number | null },
+        completedAt: status === "completed" ? new Date() : task.completedAt,
+      },
+    });
+    if (updatedCollect.status === "completed" && !updatedCollect.syncedAt) await syncTaskOrganizations(updatedCollect.id);
+    return prisma.parserTask.findUniqueOrThrow({ where: { id } });
+  }
   const remote = asTask(await clientFrom(integration).getTask(task.externalId));
   const updated = await prisma.parserTask.update({
     where: { id: task.id },
@@ -138,7 +173,20 @@ export async function syncTaskOrganizations(taskId: string) {
   let imported = 0;
   let updated = 0;
   const seen = new Set<string>();
-  const remote = task.externalId ? asTask(await parser.getTask(task.externalId)) : null;
+  if (task.type === "organizations.collect" && task.externalId) {
+    const result = (await parser.collectResult(task.externalId)) as { organizations?: unknown[]; plan?: { category?: string; city?: string } };
+    const fallbackCategory = String((task.input as { category?: string }).category ?? result.plan?.category ?? "") || null;
+    for (const item of result.organizations ?? []) {
+      const mapped = mapParserOrganization(item);
+      if (!mapped) continue;
+      if (!mapped.category) mapped.category = mapped.categories[0] ?? fallbackCategory;
+      const saved = await upsertMapped(task.tenantId, mapped);
+      seen.add(saved.organization.id);
+      if (saved.created) imported += 1;
+      else updated += 1;
+    }
+  }
+  const remote = task.externalId && task.type !== "organizations.collect" ? asTask(await parser.getTask(task.externalId)) : null;
   const inline = remote?.result && typeof remote.result === "object" ? (remote.result as { organizations?: unknown[] }).organizations ?? [] : [];
   for (const item of inline) {
     const mapped = mapParserOrganization(item);
@@ -148,7 +196,7 @@ export async function syncTaskOrganizations(taskId: string) {
     if (saved.created) imported += 1;
     else updated += 1;
   }
-  if (task.externalId) {
+  if (task.externalId && task.type !== "organizations.collect") {
     let offset = 0;
     for (let page = 0; page < 20; page += 1) {
       const query = new URLSearchParams({ taskId: task.externalId, limit: "500", offset: String(offset), fields: "summary" });

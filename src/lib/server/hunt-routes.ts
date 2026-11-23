@@ -1,3 +1,4 @@
+import { rebuildProposal } from "../services/proposals";
 import { z } from "zod";
 import { json, readJson } from "../api";
 import { ApiError } from "../errors";
@@ -168,6 +169,7 @@ export async function huntRoutes(request: Request, session: AppSession, path: st
   if (itemAction === "decide" && method === "POST") return json(await decide(tenantId, session.userId, itemId, decisionSchema.parse(await readJson(request))));
   if (itemAction === "fact" && method === "POST") return json(await addFact(tenantId, session.userId, itemId, factSchema.parse(await readJson(request))));
   if (itemAction === "pitch" && path[3] === "rewrite" && method === "POST") return json(await rewritePitch(tenantId, itemId));
+  if (itemAction === "proposal" && method === "POST") return json(await rebuildProposal(tenantId, itemId));
   if (itemAction === "pitch" && method === "PUT") return json(await savePitch(tenantId, itemId, pitchSchema.parse(await readJson(request)).text));
   if (itemAction === "sent" && method === "POST") return json(await markSent(tenantId, session.userId, session.role, itemId, sentSchema.parse(await readJson(request))));
   if (itemAction === "followup" && method === "POST") return json(await followUpDone(tenantId, session.userId, itemId, followUpSchema.parse(await readJson(request)).channel));

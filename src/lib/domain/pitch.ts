@@ -145,6 +145,8 @@ export function contactLinks(contacts: { kind: string; value: string }[], text: 
       } else if (/vk\.com\/|vk\.me\//.test(lower)) {
         const handle = value.replace(/^https?:\/\//, "").replace(/^(m\.)?vk\.(com|me)\//, "").split(/[/?#]/)[0];
         out.push({ kind: "vk", label: `VK ${handle}`, href: `https://vk.me/${handle}`, prefill: false });
+      } else if (/(^|\/\/)(www\.)?max\.ru\//.test(lower)) {
+        out.push({ kind: "link", label: "MAX", href: value.startsWith("http") ? value : `https://${value}`, prefill: false });
       } else if (/instagram\.com\//.test(lower)) {
         out.push({ kind: "instagram", label: "Instagram", href: value.startsWith("http") ? value : `https://${value}`, prefill: false });
       } else if (/^https?:\/\//.test(lower)) {
@@ -152,8 +154,10 @@ export function contactLinks(contacts: { kind: string; value: string }[], text: 
       }
     }
   }
+  // Порядок «куда писать»: мессенджеры, где человек ответит быстрее, потом почта, звонок — последним.
+  const rank: Record<ContactLink["kind"], number> = { telegram: 0, whatsapp: 1, link: 2, vk: 3, instagram: 4, email: 5, phone: 6 };
   const seen = new Set<string>();
-  return out.filter((item) => (seen.has(item.href) ? false : (seen.add(item.href), true)));
+  return out.filter((item) => (seen.has(item.href) ? false : (seen.add(item.href), true))).sort((a, b) => rank[a.kind] - rank[b.kind]);
 }
 
 /** Следующие сообщения после ответа клиента: квалифицирующий вопрос, демо, созвон (§6–§7). */

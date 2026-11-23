@@ -27,6 +27,10 @@ import { FOLLOW_UP_DAYS, bannedIn, buildPitch, contactLinks, followUpText, nextF
 import { detectSegment, segmentInfo } from "../domain/segments";
 import { dayBounds } from "../domain/time";
 import { queueSheet } from "./sheets";
+import { scanSite, storedScan } from "./site-scan";
+import { enqueueProposal, proposalUrl } from "./proposals";
+import { proposalText, type Proposal } from "../domain/proposal";
+import { logEvent } from "../log";
 
 /** Статусы, в которых карточку ещё можно (пере)квалифицировать, взять, отклонить или отложить. Дальше — живой диалог. */
 const OPEN = ["new", "snoozed", "approved", "rejected"];
@@ -55,10 +59,19 @@ function factsOf(org: OrgWithContacts): QualifyFacts {
     features: org.features.slice(0, 40),
     description: org.description ? org.description.slice(0, 1500) : null,
     sourceUrl: org.sourceUrl,
+    site: storedScan(org.siteScan),
+    reviews: reviewTexts(org.raw),
     phones: org.contacts.filter((item) => item.type === "phone").map((item) => item.value),
     emails: org.contacts.filter((item) => item.type === "email").map((item) => item.value),
     socials: org.contacts.filter((item) => item.type === "social").map((item) => item.value),
   };
+}
+
+function reviewTexts(raw: Prisma.JsonValue | null): string[] {
+  const record = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const full = Array.isArray(record.reviews) ? record.reviews.map((item) => (item && typeof item === "object" ? String((item as { text?: unknown }).text ?? "") : "")) : [];
+  const preview = Array.isArray(record.reviewsPreview) ? record.reviewsPreview.map(String) : [];
+  return [...full, ...preview].map((text) => text.trim().slice(0, 500)).filter((text) => text.length > 10).slice(0, 8);
 }
 
 async function hasLiveQualifyJob(tenantId: string, organizationId: string) {
@@ -147,7 +160,14 @@ export async function runQualify(organizationId: string, jobTenantId?: string) {
   const existing = await prisma.outreach.findUnique({ where: { organizationId } });
   if (existing && !OPEN.includes(existing.status)) return;
   const settings = await getSettings(tenantId);
-  const facts = factsOf(org);
+  // Сначала открываем сайт: реальные контакты (почта, мессенджеры) и проверяемые признаки хаоса.
+  try {
+    await scanSite(org);
+  } catch (error) {
+    logEvent("site.scan.error", { organizationId, error: error instanceof Error ? error.message : String(error) }, "warn");
+  }
+  const fresh = await prisma.organization.findUniqueOrThrow({ where: { id: organizationId }, include: { contacts: true } });
+  const facts = factsOf(fresh);
   if (isIncomplete(facts)) {
     // Парсер вернул пустую карточку — AI не вызываем, деньги не тратим. Её можно открыть по ссылке на источник.
     const data = { segment: detectSegment(org.category, org.categories), score: 0, priority: "D", card: Prisma.DbNull, factors: Prisma.DbNull, cardStatus: "incomplete", error: "Парсер не дочитал карточку: нет названия или контактов.", qualifiedAt: new Date() };
@@ -435,7 +455,14 @@ export async function getItem(tenantId: string, id: string) {
     pitch: draft,
     followUp,
     banned: bannedIn(draft),
-    links: contactLinks(card?.contact ?? row.organization.contacts.map((item) => ({ kind: item.type, value: item.value })), followUp ?? draft),
+    // Контакты — живые: со скана сайта могли добавиться почта и мессенджеры после того, как карточку собрали.
+    links: contactLinks(row.organization.contacts.map((item) => ({ kind: item.type, value: item.value })), followUp ?? draft),
+    site: storedScan(row.organization.siteScan),
+    proposal: row.proposalToken && row.proposal ? (() => {
+      const proposal = row.proposal as unknown as Proposal;
+      const url = proposalUrl(row.proposalToken);
+      return { url, text: proposalText(proposal, url), title: proposal.title, ai: proposal.ai, createdAt: proposal.createdAt };
+    })() : null,
     projectId: row.project?.id ?? null,
     lastChannel: row.channel,
   };
@@ -584,6 +611,8 @@ export async function setStatus(tenantId: string, actorId: string, id: string, i
   await activity({ tenantId, organizationId: row.organizationId, actorId, type: `outreach.${input.status}`, message: `${flow.label}${input.note ? `: ${input.note}` : ""}` });
   if (flow.stage) await moveLead(tenantId, row.organizationId, flow.stage, actorId);
   await queueSheet(tenantId, "outreach", id);
+  // Клиент ответил — сразу, параллельно с диалогом, собираем КП-презентацию под него.
+  if (["replied", "demo", "call"].includes(input.status) && !row.proposalToken) await enqueueProposal(tenantId, id);
   return { ok: true, projectId };
 }
 
@@ -695,7 +724,7 @@ export async function nextItem(tenantId: string, excludeId?: string | null) {
 export async function searches(tenantId: string) {
   const tasks = await prisma.parserTask.findMany({ where: { tenantId }, orderBy: { createdAt: "desc" }, take: 8 });
   return Promise.all(tasks.map(async (task) => {
-    const summary = (task.resultSummary ?? {}) as { orgIds?: string[] };
+    const summary = (task.resultSummary ?? {}) as { orgIds?: string[]; message?: string | null; counters?: { collected?: number; target?: number } | null };
     const ids = Array.isArray(summary.orgIds) ? summary.orgIds : [];
     const rows = ids.length ? await prisma.outreach.groupBy({ by: ["cardStatus", "priority"], where: { tenantId, organizationId: { in: ids } }, _count: { _all: true } }) : [];
     const count = (fn: (row: (typeof rows)[number]) => boolean) => rows.filter(fn).reduce((sum, row) => sum + row._count._all, 0);
@@ -710,6 +739,9 @@ export async function searches(tenantId: string) {
       createdAt: task.createdAt,
       error: task.error,
       received: task.organizationCount,
+      // Ход массового сбора: «Сбор карточек: собрано 9 из 20 · пауза, чтобы Яндекс не включил проверку».
+      stage: ["queued", "running"].includes(task.status) ? summary.message ?? null : null,
+      collected: summary.counters?.collected ?? null,
       funnel: ids.length ? {
         incomplete: count((row) => row.cardStatus === "incomplete"),
         noFact: count((row) => row.cardStatus === "no_fact"),
