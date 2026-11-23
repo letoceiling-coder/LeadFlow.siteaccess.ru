@@ -6,6 +6,8 @@ import { buildProposal, packagesFor, proposalText } from "../src/lib/domain/prop
 import { contactLinks } from "../src/lib/domain/pitch";
 
 const NOW = new Date("2026-11-23T10:00:00Z");
+const FILL = " Работаем каждый день с девяти до девяти, адрес и схема проезда ниже, звоните или приезжайте без выходных. Гарантия на все работы и запчасти.";
+const scanFull = (input: Parameters<typeof scanFromPage>[0], now?: Date) => scanFromPage({ ...input, text: input.text + FILL }, now);
 
 describe("скан сайта лида", () => {
   const html = `<html><head><meta name="viewport" content="width=device-width"><title>Кардан</title></head><body>
@@ -25,7 +27,7 @@ describe("скан сайта лида", () => {
     expect(extractLinks(html).map((item) => item.kind)).toEqual(["telegram", "whatsapp", "vk"]);
   });
   it("хаос по нише автосервиса: нет записи, сайт устарел", () => {
-    const scan = scanFromPage({ url: "https://kardan.ru", html, text, httpStatus: 200 }, NOW);
+    const scan = scanFull({ url: "https://kardan.ru", html, text, httpStatus: 200 }, NOW);
     expect(scan.viewport).toBe(true);
     expect(scan.prices).toBe(true);
     expect(scan.copyrightYear).toBe(2019);
@@ -39,7 +41,7 @@ describe("скан сайта лида", () => {
     expect(siteChaos(failedScan("https://x.ru", "Timeout 45000ms", NOW), "A2", NOW)).toEqual([]);
   });
   it("хороший сайт с записью снижает балл", () => {
-    const good = scanFromPage({ url: "https://clinic.ru", html: `<meta name="viewport"><a href="https://n123.yclients.com">Онлайн-запись</a>`, text: `Стоматология. Записаться онлайн к врачу. Приём 2 000 ₽ © ${NOW.getFullYear()}`, httpStatus: 200 }, NOW);
+    const good = scanFull({ url: "https://clinic.ru", html: `<meta name="viewport"><a href="https://n123.yclients.com">Онлайн-запись</a>`, text: `Стоматология. Записаться онлайн к врачу. Приём 2 000 ₽ © ${NOW.getFullYear()}`, httpStatus: 200 }, NOW);
     expect(siteIsGood(good)).toBe(true);
   });
 });
@@ -57,7 +59,7 @@ describe("отзывы и прайс с карт в скоринге", () => {
     expect(reviewComplaint(["Всё отлично"])).toBeNull();
   });
   it("без AI: 528 отзывов + жалоба + сайт без записи → карточка готова, класс A", () => {
-    const scan = scanFromPage({ url: "https://proauto.ru", html: `<meta name="viewport"><form></form>`, text: `Ремонт двигателей и ходовой, диагностика, шиномонтаж © ${NOW.getFullYear()}`, httpStatus: 200 }, NOW);
+    const scan = scanFull({ url: "https://proauto.ru", html: `<meta name="viewport"><form></form>`, text: `Ремонт двигателей и ходовой, диагностика, шиномонтаж © ${NOW.getFullYear()}`, httpStatus: 200 }, NOW);
     const card = buildCard({ ...base, site: scan, reviews: ["Не дозвониться никогда"] }, null);
     expect(card.chaos[0].text).toBe("В отзывах пишут, что к вам трудно дозвониться");
     expect(card.chaos.some((item) => item.source === "site")).toBe(true);
@@ -130,12 +132,23 @@ describe("внутренние страницы сайта", () => {
     expect(subpageLinks(html, "https://www.hayao.ru/cg")).toEqual(["https://www.hayao.ru/menu", "https://www.hayao.ru/delivery"]);
   });
   it("корзина на странице доставки снимает ложный факт «нет корзины»", () => {
-    const main = scanFromPage({ url: "https://hayao.ru", html: `<meta name="viewport"><a href="/delivery">Доставка</a>`, text: "Ресторан японской кухни. О ресторане, команда, контакты и адрес", httpStatus: 200 }, NOW);
-    const sub = scanFromPage({ url: "https://hayao.ru/delivery", html: `<meta name="viewport">`, text: "Филадельфия 690 ₽ — В корзину. Оформить заказ с доставкой по городу", httpStatus: 200 }, NOW);
+    const main = scanFull({ url: "https://hayao.ru", html: `<meta name="viewport"><a href="/delivery">Доставка</a>`, text: "Ресторан японской кухни. О ресторане, команда, контакты и адрес", httpStatus: 200 }, NOW);
+    const sub = scanFull({ url: "https://hayao.ru/delivery", html: `<meta name="viewport">`, text: "Филадельфия 690 ₽ — В корзину. Оформить заказ с доставкой по городу", httpStatus: 200 }, NOW);
     expect(siteChaos(main, "A1", NOW)).toContain("На сайте нет корзины — заказ только по телефону или в мессенджере");
     expect(siteChaos(mergeScans(main, [sub]), "A1", NOW)).not.toContain("На сайте нет корзины — заказ только по телефону или в мессенджере");
   });
   it("ссылка на Яндекс Еду считается корзиной", () => {
-    expect(scanFromPage({ url: "https://s.ru", html: `<a href="https://eda.yandex.ru/r/sushi">Заказать</a>`, text: "Суши и роллы в Краснодаре, доставка каждый день", httpStatus: 200 }, NOW).cart).toBe(true);
+    expect(scanFull({ url: "https://s.ru", html: `<a href="https://eda.yandex.ru/r/sushi">Заказать</a>`, text: "Суши и роллы в Краснодаре, доставка каждый день", httpStatus: 200 }, NOW).cart).toBe(true);
+  });
+});
+
+describe("недорисованные страницы", () => {
+  it("пустой текст — не факт хаоса", () => {
+    const scan = scanFromPage({ url: "https://yoyo.ru", html: "<div id=root></div>".repeat(50), text: "", httpStatus: 200 }, NOW);
+    expect(scan.ok).toBe(false);
+    expect(siteChaos(scan, "A1", NOW)).toEqual([]);
+  });
+  it("самовывоз на странице заказа считается корзиной", () => {
+    expect(scanFromPage({ url: "https://yoyo.ru", html: "", text: "YoYo Sushi Краснодар. Доставка и самовывоз. Заберу здесь. Откроемся в 11:00. Улица Невкипелого, 21/5, Краснодар. Контакты +7 918 039 70 23. Используем cookies.", httpStatus: 200 }, NOW).cart).toBe(true);
   });
 });

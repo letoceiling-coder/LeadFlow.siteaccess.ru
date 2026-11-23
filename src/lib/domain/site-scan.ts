@@ -54,7 +54,7 @@ const BUILDER_MARKERS: [RegExp, string][] = [
 ];
 
 const BOOKING = /онлайн[- ]?запис|записаться онлайн|запись онлайн|выбрать время|свободное время|yclients|dikidi|sonline|bookform|онлайн[- ]?брон|забронировать|n\d+\.yclients|medods|prodoctorov\.ru\/.*appoint/i;
-const CART = /в корзину|корзина|оформить заказ|добавить в заказ|cart|checkout|iiko|frontpad|tillypad/i;
+const CART = /в корзину|корзина|оформить заказ|добавить в заказ|самовывоз|заберу здесь|cart|checkout|iiko|frontpad|tillypad/i;
 const PRICES = /\d[\d\s]{1,7}\s?(?:₽|руб|р\.)|прайс|price-list|стоимость услуг/i;
 
 function unique<T>(list: T[]) {
@@ -124,9 +124,10 @@ export function scanFromPage(input: { url: string; html: string; text: string; t
   const marker = BUILDER_MARKERS.find(([re]) => re.test(html))?.[1] ?? null;
   return {
     url: finalUrl,
-    ok: (input.httpStatus ?? 200) < 400 && (html.length > 200 || text.length > 40),
+    // Страница без текста (не дорисовалась скриптом) — не доказательство «нет корзины»: считаем, что прочитать не удалось.
+    ok: (input.httpStatus ?? 200) < 400 && text.replace(/\s+/g, " ").trim().length >= 150,
     httpStatus: input.httpStatus ?? null,
-    error: null,
+    error: (input.httpStatus ?? 200) < 400 && text.replace(/\s+/g, " ").trim().length < 150 ? "Страница не отрисовалась — текста почти нет" : null,
     title: input.title?.trim().slice(0, 160) || null,
     https: finalUrl.startsWith("https://"),
     viewport: /<meta[^>]+name=["']viewport["']/i.test(html),

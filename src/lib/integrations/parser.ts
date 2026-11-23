@@ -69,7 +69,7 @@ export class ParserClient {
 
   /** HTML страницы через браузер парсера (синхронно, до ~45 с). Нужен для скана сайта лида. */
   pageHtml(url: string, idempotencyKey: string) {
-    return this.call("/api/v1/page/html", { method: "POST", body: JSON.stringify({ url, includeText: true, absoluteUrls: true, stripScripts: true, maxBytes: 1500000 }), headers: { "Idempotency-Key": idempotencyKey }, timeoutMs: 70000 }, [200, 201, 202]);
+    return this.call("/api/v1/page/html", { method: "POST", body: JSON.stringify({ url, includeText: true, absoluteUrls: true, stripScripts: true, maxBytes: 1500000, waitUntil: "networkidle", waitMs: 1500 }), headers: { "Idempotency-Key": idempotencyKey }, timeoutMs: 70000 }, [200, 201, 202]);
   }
 
   /** Массовый сбор организаций: промпт или город + категория, до 500 карточек, со всеми полями. */
