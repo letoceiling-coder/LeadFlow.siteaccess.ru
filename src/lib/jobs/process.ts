@@ -28,7 +28,23 @@ export async function processJob(job: JobRow) {
   const started = Date.now();
   const base = { job: job.id, type: job.type, tenant: job.tenantId };
   try {
-    if (job.type === "parser.submit") await submitParserTask(String(data.parserTaskId));
+    if (job.type === "parser.submit") {
+      try {
+        await submitParserTask(String(data.parserTaskId));
+      } catch (error) {
+        const task = await prisma.parserTask.findUnique({ where: { id: String(data.parserTaskId) }, select: { createdAt: true } });
+        const tooOld = task && Date.now() - task.createdAt.getTime() > 3 * 60 * 60 * 1000;
+        if (error instanceof RetryableError && !tooOld) {
+          // Парсер просит подождать (429) или недоступен — ждём, попытки не тратим: поиск не должен умереть из-за очереди.
+          await reschedule(job.id, Math.max(30_000, error.delayMs));
+          logEvent("parser.submit_wait", { ...base, delayMs: Math.max(30_000, error.delayMs), reason: error.message });
+          return;
+        }
+        const reason = tooOld ? "Парсер не принял задачу за 3 часа — запустите поиск снова" : error instanceof Error ? error.message : "Парсер не принял задачу";
+        await prisma.parserTask.updateMany({ where: { id: String(data.parserTaskId), status: "queued" }, data: { status: "failed", error: reason.slice(0, 300) } });
+        throw error instanceof RetryableError ? new FatalJobError(reason) : error;
+      }
+    }
     else if (job.type === "parser.poll") {
       const existing = await prisma.parserTask.findUnique({ where: { id: String(data.parserTaskId) } });
       if (!existing) throw new FatalJobError("Задача поиска не найдена");
