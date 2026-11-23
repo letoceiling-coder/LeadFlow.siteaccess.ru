@@ -31,6 +31,7 @@ import {
 import { webhookSecret, createProject, getProject, listProjects, projectCreateSchema, projectExport, projectPatchSchema, resendWebhook, updateProject } from "../services/projects";
 import { queueFullSync, sheetStatus } from "../services/sheets";
 import { systemHealth } from "../services/health";
+import { insights } from "../services/insights";
 import { aiStatus, aiUpdateSchema, updateAi } from "../services/ai-settings";
 
 function allow(session: AppSession, permission: string) {
@@ -84,6 +85,10 @@ export async function huntRoutes(request: Request, session: AppSession, path: st
   if (section === "ai" && id === "update" && method === "POST") {
     allow(session, "integrations.manage");
     return json(await updateAi(tenantId, session.userId, aiUpdateSchema.parse(await readJson(request))));
+  }
+  if (section === "insights" && method === "GET") {
+    allow(session, "org.read");
+    return json(await insights(tenantId));
   }
   if (section === "health" && method === "GET") {
     allow(session, "org.read");

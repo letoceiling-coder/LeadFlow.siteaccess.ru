@@ -48,6 +48,15 @@ export type QualifyFacts = {
 
 export type CardFact = { text: string; source: string; kind: "fact" | "assumption" };
 
+/** Федеральные сети не клиенты студии: у них свой IT-отдел. Признак — номер 8-800 или известное имя сети. */
+const CHAINS = ["додо", "dodo", "ёбидоёби", "ебидоеби", "kfc", "rostic", "ростикс", "вкусно и точка", "бургер кинг", "burger king", "папа джонс", "papa john", "тануки", "якитория", "шоколадница", "кофе хауз", "теремок", "суши wok", "суши вок", "сушивесла", "domino", "доминос", "subway", "сабвей", "starbucks", "cofix", "кофикс", "стардогс", "крошка картошка", "fit service", "фит сервис", "точка ремонта", "автомир", "вианор", "колесо.ру"];
+
+export function isFederalChain(name: string, phones: string[]) {
+  const lower = name.toLowerCase().replace(/ё/g, "е");
+  if (CHAINS.some((chain) => lower.includes(chain.replace(/ё/g, "е")))) return true;
+  return phones.some((phone) => /^\+?[78]800/.test(phone.replace(/[^\d+]/g, "")));
+}
+
 export type ObservationCard = {
   segment: SegmentId | null;
   observation: string | null;
@@ -58,6 +67,7 @@ export type ObservationCard = {
   caseRef: string | null;
   contact: { kind: string; value: string }[];
   features: string[];
+  chain?: boolean;
 };
 
 export type StrategyFactor = { key: string; label: string; points: number; hit: boolean; reason: string };
@@ -203,6 +213,7 @@ export function buildCard(facts: QualifyFacts, ai: QualifyResult | null): Observ
     caseRef: segmentInfo(segment)?.case ?? null,
     contact: contactsOf(facts),
     features: ai?.features ?? [],
+    chain: isFederalChain(facts.name, facts.phones),
   };
 }
 
@@ -231,6 +242,7 @@ export function strategyScore(card: ObservationCard, ai: QualifyResult | null) {
   push("goodSite", "Уже есть хороший сайт", -40, ai?.goodSiteAlready === true, "Есть сайт с формой, записью или каталогом");
   push("noContact", "Нет контакта", -15, !hasContact, "Нет публичного контакта");
   push("irrelevant", "Нерелевант или спам", -50, ai?.irrelevant === true, "Карточка нерелевантна");
+  push("chain", "Федеральная сеть", -70, card.chain === true, "Номер 8-800 или известная сеть — свой IT-отдел, не клиент студии");
 
   const score = Math.max(0, Math.min(100, factors.reduce((sum, item) => sum + item.points, 0)));
   const ready = card.money.length > 0 && card.chaos.length > 0 && hasContact;

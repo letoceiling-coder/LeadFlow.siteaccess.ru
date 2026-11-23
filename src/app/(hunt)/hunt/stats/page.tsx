@@ -7,6 +7,7 @@ import { useLive } from "@/components/hunt/data";
 import { Button, Glass, Notice, Ring, Segmented, Skeleton } from "@/components/hunt/ui";
 import { dayLabel, rub, type SheetStatus } from "@/components/hunt/types";
 import { HealthCard } from "@/components/hunt/health-card";
+import { InsightsCard } from "@/components/hunt/insights";
 
 type Stats = {
   days: number;
@@ -87,6 +88,8 @@ export default function HuntStatsPage() {
               {data.bySegment.map((item) => <div key={item.segment ?? "none"} className="flex justify-between py-1.5 text-[15px]"><span>{item.label}</span><span className="tabular-nums">{item.count}</span></div>)}
             </Glass>
           ) : null}
+
+          <div className="col-span-2"><InsightsCard /></div>
 
           <div className="col-span-2 space-y-2">
             <h2 className="pt-2 text-lg font-semibold">Диагностика</h2>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addManualFact, buildCard, flagsFromFactors, isIncomplete, priorityOf, qualifyResultSchema, strategyScore, type QualifyFacts } from "../src/lib/domain/qualify";
+import { addManualFact, buildCard, flagsFromFactors, isFederalChain, isIncomplete, priorityOf, qualifyResultSchema, strategyScore, type QualifyFacts } from "../src/lib/domain/qualify";
 import { detectSegment } from "../src/lib/domain/segments";
 import { bannedIn, buildPitch, contactLinks, nextFollowUpAt } from "../src/lib/domain/pitch";
 import { mergeSettings } from "../src/lib/domain/settings";
@@ -86,6 +86,16 @@ describe("ручная проверка карточки", () => {
     expect(after.ready).toBe(true);
     expect(["A", "B"]).toContain(after.priority);
     expect(addManualFact(card, "money", "  ").money).toHaveLength(0);
+  });
+});
+
+describe("федеральные сети", () => {
+  it("номер 8-800 или известное имя сети уводят карточку вниз", () => {
+    expect(isFederalChain("Додо Пицца", ["+79990000000"])).toBe(true);
+    expect(isFederalChain("Пиццерия у Ашота", ["+88003020060"])).toBe(true);
+    expect(isFederalChain("Пиццерия у Ашота", ["+79990000000"])).toBe(false);
+    const card = buildCard({ ...base, name: "Додо Пицца", phones: ["+88003020060"] }, null);
+    expect(strategyScore(card, null).priority).toBe("D");
   });
 });
 

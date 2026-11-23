@@ -7,6 +7,7 @@ import { useHunt } from "./shell";
 import { post, useLive } from "./data";
 import { Button, Chip, Field, Notice, Segmented, Sheet, cx, errorText, inputClass, useToast } from "./ui";
 import { dayLabel } from "./types";
+import { BestQueries } from "./insights";
 
 type Template = { id: string; name: string; params: { city: string; category: string; searchQuery?: string; maxResults: number } };
 type Search = { id: string; city: string; category: string; requested: number | null; status: string; syncedAt: string | null; createdAt: string; error: string | null; received: number | null; funnel: { incomplete: number; noFact: number; review: number; ready: number; queued: number } | null };
@@ -101,6 +102,8 @@ export function SearchPanel({ open }: { open: boolean }) {
           </Field>
           <button onClick={savePreset} className="inline-flex items-center gap-1.5 text-sm text-[var(--h-accent)]"><Bookmark className="h-4 w-4" /> Сохранить как пресет</button>
         </div>
+
+        <BestQueries busy={busy} onRun={(params) => launch(params, true)} />
 
         {(templates.data ?? []).length ? (
           <section>
