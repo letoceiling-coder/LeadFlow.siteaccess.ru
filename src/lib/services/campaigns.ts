@@ -41,6 +41,9 @@ export async function previewAudience(tenantId: string, filters: Record<string, 
 }
 
 export async function createCampaign(tenantId: string, userId: string, input: { name: string; channel: string; templateId?: string; filters: Record<string, unknown>; lawfulBasis?: string; basisNote?: string }) {
+  if (input.templateId && !(await prisma.messageTemplate.findFirst({ where: { id: input.templateId, tenantId }, select: { id: true } }))) {
+    throw new ApiError(404, "Шаблон не найден", "not_found");
+  }
   const preview = await previewAudience(tenantId, input.filters, input.channel);
   const campaign = await prisma.campaign.create({
     data: {
@@ -106,8 +109,8 @@ export async function sendNextRecipient(campaignId: string) {
     await prisma.campaign.update({ where: { id: campaign.id }, data: { status: "completed" } });
     return { done: true };
   }
-  const organization = await prisma.organization.findUnique({ where: { id: recipient.organizationId } });
-  const template = campaign.templateId ? await prisma.messageTemplate.findUnique({ where: { id: campaign.templateId } }) : null;
+  const organization = await prisma.organization.findFirst({ where: { id: recipient.organizationId, tenantId: campaign.tenantId } });
+  const template = campaign.templateId ? await prisma.messageTemplate.findFirst({ where: { id: campaign.templateId, tenantId: campaign.tenantId } }) : null;
   const body = personalizeTemplate(template?.body || "Здравствуйте, {{name}}. Можем показать демонстрационный макет сайта.", {
     name: organization?.name,
     city: organization?.city,
@@ -131,7 +134,7 @@ export async function sendNextRecipient(campaignId: string) {
     },
   });
   try {
-    await sendApprovedMessage(message.id, campaign.approvedById ?? undefined);
+    await sendApprovedMessage(campaign.tenantId, message.id, campaign.approvedById ?? undefined);
     await prisma.campaignRecipient.update({ where: { id: recipient.id }, data: { status: "sent", personalizedBody: body, messageId: message.id } });
     await prisma.campaign.update({ where: { id: campaign.id }, data: { sentCount: { increment: 1 } } });
   } catch (error) {

@@ -18,8 +18,8 @@ export async function emitTrigger(tenantId: string, trigger: string, payload: Re
   }
 }
 
-export async function runRule(ruleId: string, payload: Record<string, unknown>, dryRun: boolean) {
-  const rule = await prisma.automationRule.findUnique({ where: { id: ruleId } });
+export async function runRule(ruleId: string, payload: Record<string, unknown>, dryRun: boolean, tenantId: string) {
+  const rule = await prisma.automationRule.findFirst({ where: { id: ruleId, tenantId } });
   if (!rule) return;
   if (!rule.active && !dryRun) return;
   const validation = validateAutomation({

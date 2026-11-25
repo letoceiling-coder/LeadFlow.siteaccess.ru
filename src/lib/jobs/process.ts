@@ -3,6 +3,7 @@ import { prisma } from "../db";
 import { ApiError, FatalJobError, RetryableError } from "../errors";
 import { enqueueJob, finishJob, failJob, reschedule } from "./queue";
 import { logEvent } from "../log";
+import { sendAlert } from "../services/alerts";
 import { refreshParserTask, runSync, submitParserTask } from "../services/parser";
 import { runAnalysis } from "../services/analysis";
 import { advanceSite, pullParserAudit, refreshPublish } from "../services/sites";
@@ -13,6 +14,24 @@ import { markQualifyFailed, runQualify } from "../services/hunt";
 import { runSheetFull, runSheetPush } from "../services/sheets";
 import { deliverWebhook } from "../services/projects";
 import { generateProposal } from "../services/proposals";
+
+const JOB_LABEL: Record<string, string> = {
+  "parser.submit": "запуск поиска в парсере",
+  "parser.poll": "сбор результатов парсера",
+  "parser.sync": "синхронизация с парсером",
+  "analysis.run": "AI-анализ",
+  "site.generate": "генерация сайта",
+  "site.qa": "аудит сайта",
+  "site.publish": "публикация сайта",
+  "campaign.send": "рассылка",
+  "automation.run": "автоматизация",
+  "agent.turn": "ответ агента",
+  "hunt.qualify": "AI-скоринг карточки",
+  "sheets.push": "запись в Google Таблицу",
+  "sheets.full": "выгрузка в Google Таблицу",
+  "hunt.proposal": "КП-презентация",
+  "project.webhook": "отправка проекта по API",
+};
 
 type JobRow = { id: string; tenantId: string; type: string; payload: unknown; cancelRequested: boolean };
 
@@ -94,7 +113,7 @@ export async function processJob(job: JobRow) {
         return;
       }
     }
-    else if (job.type === "automation.run") await runRule(String(data.ruleId), (data.payload as Record<string, unknown>) ?? {}, Boolean(data.dryRun));
+    else if (job.type === "automation.run") await runRule(String(data.ruleId), (data.payload as Record<string, unknown>) ?? {}, Boolean(data.dryRun), job.tenantId);
     else if (job.type === "agent.turn") await runAgentTurn(String(data.threadId));
     else if (job.type === "hunt.qualify") {
       try {
@@ -121,6 +140,10 @@ export async function processJob(job: JobRow) {
     // «Поиск ещё идёт» — штатное ожидание, а не сбой: в журнал не пишем.
     const routine = error instanceof RetryableError && !error.consumeAttempt && job.type === "parser.poll";
     if (!routine) logEvent("job.failed", { ...base, ms: Date.now() - started, code, error: message.slice(0, 300) }, error instanceof RetryableError ? "warn" : "error");
+    if (!(error instanceof RetryableError)) {
+      // Окончательный сбой задачи — в Telegram, привязанный к этому пространству.
+      await sendAlert(job.tenantId, `Сбой задачи «${JOB_LABEL[job.type] ?? job.type}»`, message, { key: `job:${job.type}` });
+    }
     if (error instanceof RetryableError) {
       if (error.consumeAttempt) await failJob(job.id, error, error.delayMs);
       else await reschedule(job.id, error.delayMs);

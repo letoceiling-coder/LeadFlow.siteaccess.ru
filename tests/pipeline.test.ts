@@ -88,7 +88,7 @@ describe("карточка массового сбора", () => {
     const links = contactLinks([{ kind: "phone", value: "+79001112233" }, { kind: "social", value: "https://max.ru/u/abc" }, { kind: "social", value: "https://t.me/shop" }], "Привет");
     expect(links[0].kind).toBe("telegram");
     expect(links[links.length - 1].kind).toBe("phone");
-    expect(links.some((item) => item.label === "MAX")).toBe(true);
+    expect(links.some((item) => item.kind === "max")).toBe(true);
   });
 });
 

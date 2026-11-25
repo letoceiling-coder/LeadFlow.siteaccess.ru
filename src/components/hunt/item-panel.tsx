@@ -7,6 +7,7 @@ import { bannedIn, replyTemplates } from "@/lib/domain/pitch";
 import { scenarioOf } from "@/lib/domain/scenarios";
 import { useHunt } from "./shell";
 import { post, useLive } from "./data";
+import { DemoSection } from "./demo-section";
 import { Button, Chip, Notice, PriorityBadge, Sheet, Skeleton, cx, errorText, textareaClass, useToast } from "./ui";
 import { SOURCE_LABEL, STATUS_LABEL, dayLabel, hookOf, type CardFact, type ObservationCard } from "./types";
 
@@ -57,6 +58,7 @@ function SiteScanRow({ site }: { site: NonNullable<Item["site"]> }) {
 
 const CHANNELS = [
   { key: "telegram", label: "Telegram" },
+  { key: "max", label: "MAX" },
   { key: "whatsapp", label: "WhatsApp" },
   { key: "vk", label: "VK" },
   { key: "email", label: "Почта" },
@@ -65,7 +67,7 @@ const CHANNELS = [
   { key: "avito", label: "Авито" },
   { key: "other", label: "Другое" },
 ];
-const KIND_TO_CHANNEL: Record<string, string> = { telegram: "telegram", whatsapp: "whatsapp", vk: "vk", email: "email", phone: "phone", instagram: "instagram", link: "other" };
+const KIND_TO_CHANNEL: Record<string, string> = { telegram: "telegram", max: "max", whatsapp: "whatsapp", vk: "vk", email: "email", phone: "phone", instagram: "instagram", link: "other" };
 /** Шаги после первого сообщения. Смета — только после созвона (§3), демо — между ответом и созвоном (§7). */
 const NEXT: Record<string, string[]> = {
   sent: ["replied", "lost", "sleeping", "optout"],
@@ -408,6 +410,10 @@ export function ItemPanel({ id }: { id: string | null }) {
           ) : null}
 
           {data.actionDue ? <Notice tone="warn">Срок следующего шага по диалогу — сегодня. Ответьте клиенту или отметьте, что дальше.</Notice> : null}
+
+          {["approved", "sent", "sleeping", "replied", "demo", "call", "estimate", "won"].includes(data.status) && !data.blocked ? (
+            <DemoSection itemId={data.id} version={version} onChanged={refresh} highlight={data.status === "replied"} />
+          ) : null}
 
           {["replied", "demo", "call", "estimate", "won"].includes(data.status) ? (
             <section className="tint-yellow space-y-3 rounded-2xl border p-4">

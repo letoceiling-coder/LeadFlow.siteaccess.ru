@@ -120,7 +120,7 @@ export function nextFollowUpAt(sentAt: Date, doneSteps: number, now: Date = sent
   return new Date(Math.max(sentAt.getTime() + days * day, now.getTime() + (now === sentAt ? 0 : 2 * day)));
 }
 
-export type ContactLink = { kind: "telegram" | "whatsapp" | "vk" | "email" | "phone" | "instagram" | "link"; label: string; href: string; prefill: boolean };
+export type ContactLink = { kind: "telegram" | "max" | "whatsapp" | "vk" | "email" | "phone" | "instagram" | "link"; label: string; href: string; prefill: boolean };
 
 /** Ссылки «открыть и отправить вручную». Текст подставляется, где канал это поддерживает; иначе он в буфере. */
 export function contactLinks(contacts: { kind: string; value: string }[], text: string): ContactLink[] {
@@ -146,7 +146,7 @@ export function contactLinks(contacts: { kind: string; value: string }[], text: 
         const handle = value.replace(/^https?:\/\//, "").replace(/^(m\.)?vk\.(com|me)\//, "").split(/[/?#]/)[0];
         out.push({ kind: "vk", label: `VK ${handle}`, href: `https://vk.me/${handle}`, prefill: false });
       } else if (/(^|\/\/)(www\.)?max\.ru\//.test(lower)) {
-        out.push({ kind: "link", label: "MAX", href: value.startsWith("http") ? value : `https://${value}`, prefill: false });
+        out.push({ kind: "max", label: `MAX ${value.replace(/^https?:\/\/(www\.)?max\.ru\//i, "").slice(0, 30)}`, href: value.startsWith("http") ? value : `https://${value}`, prefill: false });
       } else if (/instagram\.com\//.test(lower)) {
         out.push({ kind: "instagram", label: "Instagram", href: value.startsWith("http") ? value : `https://${value}`, prefill: false });
       } else if (/^https?:\/\//.test(lower)) {
@@ -155,7 +155,7 @@ export function contactLinks(contacts: { kind: string; value: string }[], text: 
     }
   }
   // Порядок «куда писать»: мессенджеры, где человек ответит быстрее, потом почта, звонок — последним.
-  const rank: Record<ContactLink["kind"], number> = { telegram: 0, whatsapp: 1, link: 2, vk: 3, instagram: 4, email: 5, phone: 6 };
+  const rank: Record<ContactLink["kind"], number> = { telegram: 0, max: 1, whatsapp: 2, link: 3, vk: 4, instagram: 5, email: 6, phone: 7 };
   const seen = new Set<string>();
   return out.filter((item) => (seen.has(item.href) ? false : (seen.add(item.href), true))).sort((a, b) => rank[a.kind] - rank[b.kind]);
 }

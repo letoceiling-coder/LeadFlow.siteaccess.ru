@@ -2,17 +2,16 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
-import { BarChart3, CircleHelp, FolderKanban, House, LayoutGrid, MessagesSquare, Plus, Settings2 } from "lucide-react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { BarChart3, ChevronRight, CircleHelp, FolderKanban, LayoutGrid, ListChecks, MessagesSquare, Search, Workflow, Settings2, ShieldCheck } from "lucide-react";
 import { IconButton, ToastProvider, cx } from "./ui";
 import { GuidePanel } from "./guide-panel";
 import { ItemPanel } from "./item-panel";
 import { ProjectPanel } from "./project-panel";
 import { ScenarioPanel } from "./scenario-panel";
-import { SearchPanel } from "./search-panel";
 import { SettingsPanel } from "./settings-panel";
 
-export type HuntUser = { name: string; role: string; tenantName: string };
+export type HuntUser = { name: string; role: string; tenantName: string; isPlatformAdmin?: boolean };
 
 type PanelKind = "item" | "project" | "scenario" | "panel";
 
@@ -32,12 +31,19 @@ export function useHunt() {
   return value;
 }
 
+/** Путь клиента по шагам: найти → отобрать → написать и вести диалог → проект → цифры. На ПК — меню сверху, на телефоне — снизу. */
 const NAV = [
-  { href: "/hunt", label: "Сегодня", icon: House },
-  { href: "/hunt/dialogs", label: "Диалоги", icon: MessagesSquare },
-  { href: "/hunt/projects", label: "Проекты", icon: FolderKanban },
-  { href: "/hunt/stats", label: "Цифры", icon: BarChart3 },
+  { href: "/hunt/search", label: "Поиск", hint: "ниша и города", icon: Search },
+  { href: "/hunt", label: "Отбор", hint: "скоринг и карточки", icon: ListChecks },
+  { href: "/hunt/dialogs", label: "Диалоги", hint: "написать и вести", icon: MessagesSquare },
+  { href: "/hunt/pipeline", label: "Воронка", hint: "весь цикл по шагам", icon: Workflow },
+  { href: "/hunt/projects", label: "Проекты", hint: "сделки и демо", icon: FolderKanban },
+  { href: "/hunt/stats", label: "Цифры", hint: "воронка и таблица", icon: BarChart3 },
 ] as const;
+
+function isActive(href: string, pathname: string) {
+  return href === "/hunt" ? pathname === "/hunt" : pathname.startsWith(href);
+}
 
 export function HuntShell({ user, children }: { user: HuntUser; children: ReactNode }) {
   const router = useRouter();
@@ -74,55 +80,83 @@ export function HuntShell({ user, children }: { user: HuntUser; children: ReactN
   const scenario = params.get("scenario");
   const panel = params.get("panel");
 
+  // Старые ссылки «?panel=search» ведут на шаг «Поиск».
+  useEffect(() => {
+    if (panel === "search") router.replace("/hunt/search");
+  }, [panel, router]);
+
   return (
     <HuntContext.Provider value={value}>
       <div className="hunt hunt-glow min-h-[100dvh]">
         <ToastProvider>
-          <header className="sticky top-0 z-30 pt-[env(safe-area-inset-top)]">
-            <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-3">
-              <Link href="/hunt" className="flex items-center gap-2.5">
+          <header className="sticky top-0 z-30 border-b border-transparent pt-[env(safe-area-inset-top)] backdrop-blur-xl md:border-[var(--h-line)] md:bg-[rgba(11,11,13,0.72)]">
+            <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-3 md:max-w-6xl md:gap-4">
+              <Link href="/hunt" className="flex shrink-0 items-center gap-2.5">
                 <span className="grid h-9 w-9 place-items-center rounded-full bg-[var(--h-accent)] text-sm font-bold text-[var(--h-accent-ink)]">LF</span>
-                <span className="text-[15px] font-semibold">Охота</span>
+                <span className="text-[15px] font-semibold md:max-lg:hidden">Охота</span>
               </Link>
-              <div className="flex-1" />
+
+              {/* ПК: шаги пути клиента сверху, как меню. */}
+              <nav aria-label="Шаги" className="hidden min-w-0 flex-1 items-center justify-center md:flex">
+                {NAV.map((tab, index) => {
+                  const on = isActive(tab.href, pathname);
+                  const Icon = tab.icon;
+                  return (
+                    <div key={tab.href} className="flex items-center">
+                      {index ? <ChevronRight className="mx-0.5 h-4 w-4 shrink-0 text-[var(--h-faint)] lg:mx-1" /> : null}
+                      <Link
+                        href={tab.href}
+                        aria-current={on ? "page" : undefined}
+                        title={tab.hint}
+                        className={cx(
+                          "flex h-11 items-center gap-2 rounded-full pl-1.5 pr-3.5 text-sm font-medium transition",
+                          on ? "bg-[var(--h-text)] text-[#111]" : "text-[var(--h-muted)] hover:bg-white/10 hover:text-[var(--h-text)]",
+                        )}
+                      >
+                        <span className={cx("grid h-8 w-8 place-items-center rounded-full text-xs font-semibold tabular-nums", on ? "bg-[var(--h-accent)] text-[var(--h-accent-ink)]" : "bg-white/10")}>
+                          <span className="lg:hidden"><Icon className="h-4 w-4" /></span>
+                          <span className="max-lg:hidden">{index + 1}</span>
+                        </span>
+                        <span className="leading-tight">
+                          {tab.label}
+                          <span className={cx("block text-[11px] font-normal max-lg:hidden", on ? "text-[#111]/55" : "text-[var(--h-faint)]")}>{tab.hint}</span>
+                        </span>
+                      </Link>
+                    </div>
+                  );
+                })}
+              </nav>
+
+              <div className="flex-1 md:hidden" />
               <IconButton label="Как работает охота" onClick={() => open("panel", "guide")}><CircleHelp className="h-5 w-5" /></IconButton>
-              <IconButton label="Настройки охоты" onClick={() => open("panel", "settings")}><Settings2 className="h-5 w-5" /></IconButton>
+              <IconButton label="Настройки и интеграции" onClick={() => open("panel", "settings")}><Settings2 className="h-5 w-5" /></IconButton>
+              {user.isPlatformAdmin ? <IconButton label="Админка: люди и доступы" onClick={() => router.push("/admin")}><ShieldCheck className="h-5 w-5" /></IconButton> : null}
               <IconButton label="Полная версия LeadFlow" onClick={() => router.push("/overview")}><LayoutGrid className="h-5 w-5" /></IconButton>
             </div>
           </header>
 
-          <main className="mx-auto max-w-3xl px-4 pb-[calc(120px+env(safe-area-inset-bottom))]">{children}</main>
+          <main className="mx-auto max-w-3xl px-4 pb-[calc(104px+env(safe-area-inset-bottom))] md:max-w-6xl md:pb-16 md:pt-4">{children}</main>
 
-          <nav aria-label="Разделы" className="fixed inset-x-0 bottom-[calc(12px+env(safe-area-inset-bottom))] z-40 flex justify-center px-3">
-            <div className="flex items-center gap-2">
-              <div className="glass-strong flex items-center gap-1 rounded-full p-1.5">
-                {NAV.map((tab) => {
-                  const on = tab.href === "/hunt" ? pathname === "/hunt" : pathname.startsWith(tab.href);
-                  const Icon = tab.icon;
-                  return (
-                    <Link
-                      key={tab.href}
-                      href={tab.href}
-                      aria-label={tab.label}
-                      aria-current={on ? "page" : undefined}
-                      className={cx(
-                        "flex h-12 items-center justify-center gap-2 rounded-full transition-all duration-200",
-                        on ? "bg-[var(--h-text)] px-3.5 text-[#111] max-[359px]:w-12 max-[359px]:px-0" : "w-11 text-[var(--h-muted)] hover:bg-white/10 hover:text-[var(--h-text)] min-[360px]:w-12",
-                      )}
-                    >
+          {/* Телефон: нижняя панель вкладок, как в приложении. */}
+          <nav aria-label="Разделы" className="glass-sheet fixed inset-x-0 bottom-0 z-40 rounded-none border-x-0 border-b-0 pb-[env(safe-area-inset-bottom)] md:hidden">
+            <div className="mx-auto grid max-w-lg grid-cols-6">
+              {NAV.map((tab) => {
+                const on = isActive(tab.href, pathname);
+                const Icon = tab.icon;
+                return (
+                  <Link
+                    key={tab.href}
+                    href={tab.href}
+                    aria-current={on ? "page" : undefined}
+                    className={cx("flex h-[60px] flex-col items-center justify-center gap-1 text-[11px] font-medium transition active:scale-95", on ? "text-[var(--h-accent)]" : "text-[var(--h-muted)]")}
+                  >
+                    <span className={cx("grid h-8 w-12 place-items-center rounded-full transition", on && "bg-[rgba(255,214,10,0.16)]")}>
                       <Icon className="h-[22px] w-[22px]" strokeWidth={on ? 2.2 : 1.8} />
-                      {on ? <span className="text-[15px] font-semibold max-[359px]:hidden">{tab.label}</span> : null}
-                    </Link>
-                  );
-                })}
-              </div>
-              <button
-                aria-label="Новый поиск"
-                onClick={() => open("panel", "search")}
-                className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-[var(--h-accent)] min-[360px]:h-[60px] min-[360px]:w-[60px] text-[var(--h-accent-ink)] shadow-[0_10px_30px_rgba(255,214,10,0.35)] transition hover:brightness-105 active:scale-95"
-              >
-                <Plus className="h-7 w-7" strokeWidth={2.4} />
-              </button>
+                    </span>
+                    {tab.label}
+                  </Link>
+                );
+              })}
             </div>
           </nav>
 
@@ -130,7 +164,6 @@ export function HuntShell({ user, children }: { user: HuntUser; children: ReactN
           <ItemPanel id={item} />
           <ProjectPanel id={item ? null : project} />
           <ScenarioPanel id={item || project ? null : scenario} />
-          <SearchPanel open={!item && !project && !scenario && panel === "search"} />
           <SettingsPanel open={!item && !project && !scenario && panel === "settings"} />
           <GuidePanel open={!item && !project && !scenario && panel === "guide"} />
         </ToastProvider>

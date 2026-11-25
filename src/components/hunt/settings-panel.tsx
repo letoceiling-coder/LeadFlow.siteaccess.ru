@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Copy, Cpu, ExternalLink, Minus, Plus, RefreshCw, Sheet as SheetIcon } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { BellRing, Copy, Cpu, ExternalLink, Minus, Plus, RefreshCw, Sheet as SheetIcon } from "lucide-react";
 import { appsScript } from "@/lib/domain/apps-script";
 import { useHunt } from "./shell";
 import { post, useLive } from "./data";
@@ -10,6 +10,7 @@ import { dayLabel, type HuntSettings, type SheetStatus } from "./types";
 
 type Segment = { id: string; label: string; contour: string };
 type AiStatus = { configured: boolean; status: string; lastError: string | null; lastCheckedAt: string | null; proxy: { source: "admin" | "env" | "default" | "direct"; host: string | null }; hasKey: boolean; pendingRescore: number };
+type TgStatus = { hasBot: boolean; botUsername: string | null; linked: boolean; chatTitle: string | null; linkedAt: string | null; pending: boolean };
 const PROXY_SOURCE: Record<string, string> = { admin: "введён здесь", env: "из .env сервера", default: "запасной из кода", direct: "без прокси" };
 
 const ZONES = [
@@ -43,6 +44,9 @@ export function SettingsPanel({ open }: { open: boolean }) {
   const [projectWebhook, setProjectWebhook] = useState("");
   const hunt = settings.data?.hunt;
   const ai = useLive<AiStatus>(open && admin ? "/api/hunt/ai" : null, version);
+  const tg = useLive<TgStatus>(open && admin ? "/api/hunt/telegram" : null, version);
+  const [botToken, setBotToken] = useState("");
+  const [bindLink, setBindLink] = useState("");
   const [proxyUrl, setProxyUrl] = useState("");
   const [aiKey, setAiKey] = useState("");
 
@@ -59,6 +63,60 @@ export function SettingsPanel({ open }: { open: boolean }) {
     } catch (reason) {
       setError(errorText(reason));
       await ai.reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function bindTelegram() {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await post<{ link: string }>("/api/hunt/telegram/bind", { botToken: botToken.trim() || undefined });
+      setBotToken("");
+      setBindLink(result.link);
+      window.open(result.link, "_blank", "noopener");
+      await tg.reload();
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const tgRef = useRef({ reload: tg.reload, toast });
+  tgRef.current = { reload: tg.reload, toast };
+  // Пока ссылка открыта, раз в 3 секунды спрашиваем сервер, нажал ли человек «Start» в боте.
+  useEffect(() => {
+    if (!bindLink || !open) return;
+    let stopped = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const result = await post<{ linked: boolean; chatTitle?: string }>("/api/hunt/telegram/confirm");
+        if (result.linked && !stopped) {
+          stopped = true;
+          setBindLink("");
+          await tgRef.current.reload();
+          tgRef.current.toast({ text: `Telegram привязан${result.chatTitle ? `: ${result.chatTitle}` : ""}` });
+        }
+      } catch (reason) {
+        stopped = true;
+        setBindLink("");
+        setError(errorText(reason));
+      }
+    }, 3000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [bindLink, open]);
+
+  async function tgAction(url: string, method: string, ok: string) {
+    setBusy(true);
+    setError("");
+    try {
+      await post(url, undefined, method);
+      await tg.reload();
+      toast({ text: ok });
+    } catch (reason) {
+      setError(errorText(reason));
     } finally {
       setBusy(false);
     }
@@ -150,6 +208,42 @@ export function SettingsPanel({ open }: { open: boolean }) {
             </Field>
             <Button variant="accent" size="lg" className="w-full" pending={busy} onClick={updateAi}><RefreshCw className="h-5 w-5" /> Обновить</Button>
             <p className="text-xs text-[var(--h-faint)]">«Обновить» сохраняет введённое, проверяет связь с OpenRouter и, если всё хорошо, пересчитывает карточки. Пустые поля — просто повторная проверка.</p>
+          </section>
+        ) : null}
+
+        {admin ? (
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <BellRing className="h-5 w-5 text-[var(--h-accent)]" />
+              <h3 className="text-lg font-semibold">Ошибки в Telegram</h3>
+              {tg.data ? <span className={cx("ml-auto rounded-full px-2.5 py-1 text-xs font-medium", tg.data.linked ? "bg-[rgba(59,224,138,0.14)] text-[#8ff0bd]" : "bg-white/10 text-[var(--h-muted)]")}>{tg.data.linked ? "привязан" : "не привязан"}</span> : null}
+            </div>
+            <p className="text-sm text-[var(--h-muted)]">Сбои поиска, парсера, AI-скоринга, таблицы и внутренние ошибки этого аккаунта приходят в привязанный чат. Другие аккаунты сюда не пишут.</p>
+            {!tg.data ? <Skeleton rows={1} /> : (
+              <>
+                {tg.data.linked ? (
+                  <Glass className="space-y-1 p-4 text-sm">
+                    <p>Чат: <b>{tg.data.chatTitle ?? "—"}</b>{tg.data.botUsername ? <span className="text-[var(--h-muted)]"> · бот @{tg.data.botUsername}</span> : null}</p>
+                    {tg.data.linkedAt ? <p className="text-[var(--h-muted)]">Привязан {dayLabel(tg.data.linkedAt)}</p> : null}
+                    <div className="flex flex-wrap gap-2 pt-2">
+                      <Button size="sm" pending={busy} onClick={() => tgAction("/api/hunt/telegram/test", "POST", "Тестовое сообщение отправлено")}>Отправить тест</Button>
+                      <Button size="sm" pending={busy} onClick={() => tgAction("/api/hunt/telegram", "DELETE", "Telegram отвязан")}>Отвязать</Button>
+                    </div>
+                  </Glass>
+                ) : null}
+                {!tg.data.hasBot || !tg.data.linked ? (
+                  <Field label={tg.data.hasBot ? "Токен своего бота (необязательно)" : "Токен бота"} hint={tg.data.hasBot ? `Сейчас используется @${tg.data.botUsername ?? "бот"}. Поле — чтобы заменить бота.` : "Создайте бота в @BotFather → /newbot и вставьте токен. Хранится зашифрованным."}>
+                    <input className={inputClass} type="password" value={botToken} onChange={(event) => setBotToken(event.target.value)} placeholder="123456789:AA…" autoComplete="off" spellCheck={false} />
+                  </Field>
+                ) : null}
+                {bindLink ? (
+                  <Notice tone="info">Откройте бота и нажмите «Start» — привязка подтвердится сама. <a className="underline" href={bindLink} target="_blank" rel="noreferrer">Открыть бота</a></Notice>
+                ) : null}
+                <Button variant={tg.data.linked ? undefined : "accent"} size="lg" className="w-full" pending={busy || Boolean(bindLink)} disabled={!tg.data.hasBot && !botToken.trim()} onClick={bindTelegram}>
+                  <BellRing className="h-5 w-5" /> {tg.data.linked ? "Привязать другой чат" : "Привязать Telegram"}
+                </Button>
+              </>
+            )}
           </section>
         ) : null}
 

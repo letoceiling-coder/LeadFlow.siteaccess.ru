@@ -155,3 +155,14 @@ a { color: inherit; }
   .lf-dark .overflow-x-auto > table { min-width: 720px; }
 }
 .lf-dark input[type="checkbox"], .lf-dark input[type="radio"] { accent-color: var(--h-accent); }
+
+/* Живой прогресс поиска: бегущие полосы, как загрузка уровня. */
+@keyframes progress-stripes { from { background-position: 0 0; } to { background-position: 28px 0; } }
+.progress-live {
+  background-image: linear-gradient(135deg, rgba(255,255,255,0.28) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.28) 50%, rgba(255,255,255,0.28) 75%, transparent 75%, transparent);
+  background-size: 28px 28px;
+  animation: progress-stripes 0.9s linear infinite;
+}
+@keyframes pop-in { 0% { transform: scale(0.96); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+.anim-pop { animation: pop-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+@media (prefers-reduced-motion: reduce) { .progress-live, .anim-pop { animation: none; } }

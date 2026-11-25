@@ -15,6 +15,7 @@ export type AppSession = {
   membershipId: string;
   role: RoleName;
   sessionId: string;
+  isPlatformAdmin: boolean;
 };
 
 const COOKIE = "lf_session";
@@ -64,6 +65,7 @@ export async function getSession(): Promise<AppSession | null> {
     include: { user: { include: { memberships: { include: { tenant: true } } } } },
   });
   if (!session || session.revokedAt || session.expiresAt < new Date()) return null;
+  if (session.user.status === "blocked") return null;
   const membership = session.user.memberships.find((item) => item.id === payload.mid) ?? session.user.memberships[0];
   if (!membership) return null;
   return {
@@ -75,6 +77,7 @@ export async function getSession(): Promise<AppSession | null> {
     membershipId: membership.id,
     role: membership.role,
     sessionId: session.id,
+    isPlatformAdmin: isPlatformAdminUser(session.user),
   };
 }
 
@@ -116,7 +119,16 @@ export async function createUserSession(userId: string, membershipId: string) {
     membershipId: membership.id,
     role: membership.role,
     sessionId: session.id,
+    isPlatformAdmin: isPlatformAdminUser(user),
   };
   await writeSessionCookie(app);
   return app;
+}
+
+/** Администратор платформы: флаг в базе или почта из PLATFORM_ADMIN_EMAILS (через запятую) — на случай, если флаг потерян. */
+export function isPlatformAdminUser(user: { email: string; isPlatformAdmin: boolean; status?: string }) {
+  if (user.status === "blocked") return false;
+  if (user.isPlatformAdmin) return true;
+  const list = (process.env.PLATFORM_ADMIN_EMAILS || "").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
+  return list.includes(user.email.toLowerCase());
 }

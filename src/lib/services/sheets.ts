@@ -5,16 +5,36 @@ import { sheetSafe } from "../domain/sheet-safe";
 import { isReady, resolveIntegration } from "../integrations/config";
 import { upsertRows } from "../integrations/sheets";
 import { enqueueJob } from "../jobs/queue";
-import { segmentInfo } from "../domain/segments";
+import { SEGMENTS, segmentInfo } from "../domain/segments";
 import { scenarioOf, PROJECT_STAGES } from "../domain/scenarios";
 import type { ObservationCard } from "../domain/qualify";
 
-/** Зеркало в Google Таблицу: лист «Лиды» (квалифицированные карточки и касания) и «Проекты». */
+/**
+ * Зеркало в Google Таблицу: лиды раскладываются по листам ниш («Автосервисы», «Доставка еды»…),
+ * без ниши — на лист «Без ниши». Проекты — на лист «Проекты».
+ * Если у лида сменилась ниша, скрипт переносит строку на новый лист вместе с ручными колонками.
+ */
 
-export const LEAD_SHEET = "Лиды";
+export const LEAD_SHEET = "Лиды"; // старый общий лист: строки с него переезжают на листы ниш
+export const NO_SEGMENT_SHEET = "Без ниши";
 export const PROJECT_SHEET = "Проекты";
+const LEAD_SHEETS = [...SEGMENTS.map((item) => item.label), NO_SEGMENT_SHEET, LEAD_SHEET];
 
-const LEAD_HEADER = ["id", "Компания", "Город", "Ниша", "Приоритет", "Балл", "Статус", "Деньги", "Хаос", "Крючок", "Телефоны", "Соцсети", "Источник", "Квалифицирован", "Отправлено", "Канал", "Напоминаний", "След. напоминание", "Ответ", "Обновлено"];
+function leadSheetOf(segment: string | null | undefined) {
+  return segmentInfo(segment)?.label ?? NO_SEGMENT_SHEET;
+}
+
+/** Строки лидов группами по листам ниш. */
+async function pushLeads(secrets: Parameters<typeof upsertRows>[0], rows: { record: { segment: string | null }; values: Record<string, unknown> }[]) {
+  const groups = new Map<string, Record<string, unknown>[]>();
+  for (const row of rows) {
+    const sheet = leadSheetOf(row.record.segment);
+    groups.set(sheet, [...(groups.get(sheet) ?? []), safeRow(row.values)]);
+  }
+  for (const [sheet, list] of groups) await upsertRows(secrets, sheet, LEAD_HEADER, list, LEAD_SHEETS);
+}
+
+const LEAD_HEADER = ["id", "Компания", "Город", "Ниша", "Приоритет", "Балл", "Статус", "Деньги", "Хаос", "Крючок", "Телефоны", "Email", "Соцсети", "Сайт", "Адрес", "Источник", "Квалифицирован", "Отправлено", "Канал", "Напоминаний", "След. напоминание", "Ответ", "Обновлено"];
 const PROJECT_HEADER = ["id", "Создан", "Проект", "Компания", "Город", "Сценарий", "Продукт", "Этап", "Сумма, ₽", "Дедлайн", "Прогресс", "Контакт", "Заметки", "Обновлено", "JSON"];
 
 const STATUS: Record<string, string> = { new: "Новая", approved: "В работе", rejected: "Отклонена", snoozed: "Отложена", sent: "Отправлено", replied: "Ответил", demo: "Демо", call: "Созвон", estimate: "Смета", won: "Сделка", lost: "Отказ", sleeping: "Спящий" };
@@ -65,7 +85,10 @@ async function leadRows(where: { tenantId: string; id?: { in: string[] } }) {
         "Хаос": card?.chaos.map((item) => item.text).join("; ") ?? "",
         "Крючок": card?.observation ?? "",
         "Телефоны": row.organization.contacts.filter((item) => item.type === "phone").map((item) => item.value).join(", "),
+        "Email": row.organization.contacts.filter((item) => item.type === "email").map((item) => item.value).join(", "),
         "Соцсети": row.organization.contacts.filter((item) => item.type === "social").map((item) => item.value).join(", "),
+        "Сайт": row.organization.website ?? "",
+        "Адрес": row.organization.address ?? "",
         "Источник": row.organization.sourceUrl ?? "",
         "Квалифицирован": day(row.qualifiedAt),
         "Отправлено": day(row.sentAt),
@@ -126,7 +149,7 @@ export async function runSheetPush(kind: string, id: string, jobTenantId?: strin
     await markSynced("project", [id], startedAt);
   } else {
     const rows = await leadRows({ tenantId: record.tenantId, id: { in: [id] } });
-    await upsertRows(integration.secrets, LEAD_SHEET, LEAD_HEADER, rows.map((row) => safeRow(row.values)));
+    await pushLeads(integration.secrets, rows);
     if (rows.length) await markSynced("outreach", [id], startedAt);
   }
 }
@@ -139,7 +162,7 @@ export async function runSheetFull(tenantId: string) {
   for (let i = 0; i < leads.length; i += 200) {
     const chunk = leads.slice(i, i + 200);
     const at = new Date();
-    await upsertRows(integration.secrets, LEAD_SHEET, LEAD_HEADER, chunk.map((row) => safeRow(row.values)));
+    await pushLeads(integration.secrets, chunk);
     await markSynced("outreach", chunk.map((row) => row.record.id), at);
   }
   const projects = await projectRows({ tenantId });

@@ -99,8 +99,8 @@ export async function approveMessage(tenantId: string, userId: string, messageId
   return updated;
 }
 
-export async function sendApprovedMessage(messageId: string, actorId?: string) {
-  const message = await prisma.message.findUnique({ where: { id: messageId }, include: { conversation: true } });
+export async function sendApprovedMessage(tenantId: string, messageId: string, actorId?: string) {
+  const message = await prisma.message.findFirst({ where: { id: messageId, tenantId }, include: { conversation: true } });
   if (!message) throw new ApiError(404, "Сообщение не найдено", "not_found");
   if (message.status === "sent" || message.status === "sent_test") return message;
   const organizationId = message.conversation.organizationId;

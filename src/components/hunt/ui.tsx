@@ -233,7 +233,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={push}>
       {children}
       {toast ? (
-        <div role="status" className="anim-toast glass-sheet fixed bottom-[calc(96px+env(safe-area-inset-bottom))] left-1/2 z-[60] flex w-[min(92vw,420px)] -translate-x-1/2 items-center gap-3 rounded-2xl px-4 py-3 text-sm">
+        <div role="status" className="anim-toast glass-sheet fixed bottom-[calc(76px+env(safe-area-inset-bottom))] md:bottom-6 left-1/2 z-[60] flex w-[min(92vw,420px)] -translate-x-1/2 items-center gap-3 rounded-2xl px-4 py-3 text-sm">
           <span className={cx("h-2 w-2 shrink-0 rounded-full", toast.tone === "error" ? "bg-[var(--h-danger)]" : "bg-[var(--h-ok)]")} />
           <span className="min-w-0 flex-1">{toast.text}</span>
           {toast.action ? (

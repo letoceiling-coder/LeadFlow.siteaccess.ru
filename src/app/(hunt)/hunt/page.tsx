@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Check, Loader2, Plus, RotateCcw, X } from "lucide-react";
 import { useHunt } from "@/components/hunt/shell";
 import { post, useLive } from "@/components/hunt/data";
 import { ItemCard } from "@/components/hunt/item-card";
 import { HealthStrip } from "@/components/hunt/health-card";
+import { LiveSearches } from "@/components/hunt/search-progress";
 import { Button, Chip, Empty, Glass, Notice, Segmented, Skeleton, cx, errorText, useToast } from "@/components/hunt/ui";
 import { STATUS_LABEL, dayLabel, type Dialogs, type HuntItem, type Today } from "@/components/hunt/types";
 
@@ -18,6 +20,7 @@ function greeting(timeZone: string) {
 
 export default function HuntTodayPage() {
   const { version, refresh, open, user } = useHunt();
+  const router = useRouter();
   const toast = useToast();
   const [picked, setTab] = useState<Tab | null>(null);
   const [segment, setSegment] = useState<string | null>(null);
@@ -80,7 +83,7 @@ export default function HuntTodayPage() {
 
   return (
     <div className="pt-2">
-      <p className="text-sm text-[var(--h-faint)] first-letter:uppercase">{date}</p>
+      <p className="text-sm text-[var(--h-faint)] first-letter:uppercase">{date} · шаг 2 из 5 — отбор</p>
       <h1 className="mt-1 text-[32px] font-semibold leading-[38px] tracking-tight">
         <span className="text-[var(--h-muted)]">{greeting(tz)},</span> {user.name.split(" ")[0]}
       </h1>
@@ -103,6 +106,7 @@ export default function HuntTodayPage() {
       ) : null}
 
       <div className="mt-3"><HealthStrip /></div>
+      <div className="mt-3"><LiveSearches /></div>
 
       <div className="sticky top-[68px] z-20 -mx-4 mt-3 px-4 py-2 backdrop-blur-md">
         <Segmented<Tab>
@@ -137,9 +141,9 @@ export default function HuntTodayPage() {
                   text={data?.reviewTotal ? `Есть ${data.reviewTotal} на проверку: хаос и контакт найдены, нужен факт «денег» — подтвердите его глазами.` : "Сюда попадают A и B с подтверждённым фактом денег и хаоса. Запустите поиск — карточки сами пройдут скоринг."}
                   action={data?.reviewTotal
                     ? <Button variant="accent" size="lg" onClick={() => setTab("review")}>Проверить {data.reviewTotal}</Button>
-                    : <Button variant="accent" size="lg" onClick={() => open("panel", "search")}><Plus className="h-5 w-5" /> Новый поиск</Button>}
+                    : <Button variant="accent" size="lg" onClick={() => router.push("/hunt/search")}><Plus className="h-5 w-5" /> Новый поиск</Button>}
                 />
-              ) : items.map((item) => (
+              ) : <div className="grid gap-3 lg:grid-cols-2">{items.map((item) => (
                 <ItemCard
                   key={item.id}
                   item={item}
@@ -151,7 +155,7 @@ export default function HuntTodayPage() {
                     </div>
                   }
                 />
-              ))}
+              ))}</div>}
               {data?.incomplete ? <p className="px-1 text-xs text-[var(--h-faint)]">Неполных карточек от парсера: {data.incomplete} — без названия или контактов, в ленту не попадают.</p> : null}
             </>
           )
@@ -163,7 +167,7 @@ export default function HuntTodayPage() {
           ) : (
             <>
               <p className="px-1 text-sm text-[var(--h-muted)]">Откройте карточку, посмотрите источник и отметьте недостающий факт, если он есть. Нет — отклоните.</p>
-              {visible(data.review).map((item) => <ItemCard key={item.id} item={item} onOpen={() => open("item", item.id)} meta={<span className="text-[#ffe680]">Нужен факт «{item.card?.money.length ? "хаоса" : "денег"}» · {item.score} баллов</span>} />)}
+              <div className="grid gap-3 lg:grid-cols-2">{visible(data.review).map((item) => <ItemCard key={item.id} item={item} onOpen={() => open("item", item.id)} meta={<span className="text-[#ffe680]">Нужен факт «{item.card?.money.length ? "хаоса" : "денег"}» · {item.score} баллов</span>} />)}</div>
             </>
           )
         ) : null}
@@ -171,20 +175,20 @@ export default function HuntTodayPage() {
         {tab === "write" ? (
           !dialogs.data ? <Skeleton rows={3} /> : dialogs.data.approved.length === 0 ? (
             <Empty title="Писать некому" text="Возьмите карточки в работу во вкладке «Новые» — здесь появится готовый текст и кнопки мессенджеров." />
-          ) : dialogs.data.approved.map((item) => <ItemCard key={item.id} item={item} onOpen={() => open("item", item.id)} />)
+          ) : <div className="grid gap-3 lg:grid-cols-2">{dialogs.data.approved.map((item) => <ItemCard key={item.id} item={item} onOpen={() => open("item", item.id)} />)}</div>
         ) : null}
 
         {tab === "remind" ? (
           !dialogs.data ? <Skeleton rows={3} /> : dialogs.data.due.length === 0 ? (
             <Empty title="Срочного нет" text="Здесь напоминания через 3, 7 и 14 дней и сроки по диалогам: ответить в течение суток, созвон, смета." />
-          ) : dialogs.data.due.map((item) => (
+          ) : <div className="grid gap-3 lg:grid-cols-2">{dialogs.data.due.map((item) => (
             <ItemCard
               key={item.id}
               item={item}
               onOpen={() => open("item", item.id)}
               meta={<span className="text-[#ffc3a6]">{item.status === "sent" ? `Напоминание ${item.followUpStep + 1} из 3 · написали ${dayLabel(item.sentAt)}` : `${STATUS_LABEL[item.status]} — пора следующий шаг`}</span>}
             />
-          ))
+          ))}</div>
         ) : null}
       </div>
     </div>

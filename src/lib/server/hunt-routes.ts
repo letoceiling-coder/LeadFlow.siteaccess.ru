@@ -16,6 +16,8 @@ import {
   followUpDone,
   nextItem,
   searches,
+  searchDetail,
+  deleteSearch,
   getItem,
   markSent,
   pitchSchema,
@@ -34,6 +36,11 @@ import { queueFullSync, sheetStatus } from "../services/sheets";
 import { systemHealth } from "../services/health";
 import { insights } from "../services/insights";
 import { aiStatus, aiUpdateSchema, updateAi } from "../services/ai-settings";
+import { demoEditSchema, demoStartSchema, editDemo, getDemo, previewDemo, publishDemo, rebuildDemo, startDemo } from "../services/hunt-demo";
+import { pipeline, pipelineQuerySchema } from "../services/pipeline";
+import { alertStatus, confirmBinding, startBinding, testAlert, unbindTelegram } from "../services/alerts";
+
+const bindSchema = z.object({ botToken: z.string().trim().max(200).optional() });
 
 function allow(session: AppSession, permission: string) {
   if (!can(session.role, permission)) throw new ApiError(403, "Недостаточно прав для этого действия", "forbidden");
@@ -70,14 +77,26 @@ export async function huntRoutes(request: Request, session: AppSession, path: st
     allow(session, "org.read");
     return json(await stats(tenantId, int(url.searchParams.get("days"), 7, 1, 90)));
   }
+  if (section === "pipeline" && method === "GET") {
+    allow(session, "org.read");
+    return json(await pipeline(tenantId, pipelineQuerySchema.parse(Object.fromEntries(url.searchParams))));
+  }
   if (section === "segments" && method === "GET") return json(SEGMENTS);
   if (section === "next" && method === "GET") {
     allow(session, "org.read");
     return json(await nextItem(tenantId, url.searchParams.get("after")));
   }
-  if (section === "searches" && method === "GET") {
+  if (section === "searches" && !id && method === "GET") {
     allow(session, "org.read");
-    return json(await searches(tenantId));
+    return json(await searches(tenantId, int(url.searchParams.get("limit"), 8, 1, 100)));
+  }
+  if (section === "searches" && id && method === "GET") {
+    allow(session, "org.read");
+    return json(await searchDetail(tenantId, id));
+  }
+  if (section === "searches" && id && method === "DELETE") {
+    allow(session, "search.manage");
+    return json(await deleteSearch(tenantId, id));
   }
   if (section === "ai" && !id && method === "GET") {
     allow(session, "integrations.manage");
@@ -86,6 +105,17 @@ export async function huntRoutes(request: Request, session: AppSession, path: st
   if (section === "ai" && id === "update" && method === "POST") {
     allow(session, "integrations.manage");
     return json(await updateAi(tenantId, session.userId, aiUpdateSchema.parse(await readJson(request))));
+  }
+  if (section === "telegram") {
+    allow(session, "integrations.manage");
+    if (!id && method === "GET") return json(await alertStatus(tenantId));
+    if (id === "bind" && method === "POST") return json(await startBinding(tenantId, session.userId, bindSchema.parse(await readJson(request)).botToken || undefined));
+    if (id === "confirm" && method === "POST") return json(await confirmBinding(tenantId, session.userId));
+    if (id === "test" && method === "POST") return json(await testAlert(tenantId));
+    if (!id && method === "DELETE") {
+      await unbindTelegram(tenantId, session.userId);
+      return json({ ok: true });
+    }
   }
   if (section === "insights" && method === "GET") {
     allow(session, "org.read");
@@ -164,6 +194,21 @@ export async function huntRoutes(request: Request, session: AppSession, path: st
   if (path.length === 2 && method === "GET") {
     allow(session, "org.read");
     return json(await getItem(tenantId, itemId));
+  }
+  if (itemAction === "demo" && !path[3] && method === "GET") {
+    allow(session, "org.read");
+    return json(await getDemo(tenantId, itemId));
+  }
+  if (itemAction === "demo") {
+    // Демо из охоты — часть работы с лидом: те же права, что у отправки сообщения.
+    allow(session, "lead.manage");
+    const step = path[3];
+    if (!step && method === "POST") return json(await startDemo(tenantId, session.userId, itemId, demoStartSchema.parse(await readJson(request))), 202);
+    if (step === "rebuild" && method === "POST") return json(await rebuildDemo(tenantId, session.userId, itemId, demoStartSchema.parse(await readJson(request))), 202);
+    if (step === "edit" && method === "POST") return json(await editDemo(tenantId, session.userId, itemId, demoEditSchema.parse(await readJson(request)).text), 202);
+    if (step === "publish" && method === "POST") return json(await publishDemo(tenantId, session.userId, itemId));
+    if (step === "preview" && method === "POST") return json(await previewDemo(tenantId, itemId));
+    throw new ApiError(404, "Действие с демо не найдено", "not_found");
   }
   allow(session, "lead.manage");
   if (itemAction === "decide" && method === "POST") return json(await decide(tenantId, session.userId, itemId, decisionSchema.parse(await readJson(request))));

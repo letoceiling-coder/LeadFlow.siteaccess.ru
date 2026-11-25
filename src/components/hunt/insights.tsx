@@ -15,7 +15,7 @@ export type Insights = {
   advice: string[];
 };
 
-const CHANNEL: Record<string, string> = { telegram: "Telegram", whatsapp: "WhatsApp", vk: "VK", email: "Почта", phone: "Звонок", instagram: "Instagram", avito: "Авито", other: "Другое" };
+const CHANNEL: Record<string, string> = { telegram: "Telegram", max: "MAX", whatsapp: "WhatsApp", vk: "VK", email: "Почта", phone: "Звонок", instagram: "Instagram", avito: "Авито", other: "Другое" };
 
 export function useInsights(enabled = true) {
   const { version } = useHunt();

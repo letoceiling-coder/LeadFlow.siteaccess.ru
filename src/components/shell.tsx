@@ -23,6 +23,7 @@ import {
   ScrollText,
   Search,
   Settings,
+  ShieldCheck,
   Sparkles,
   UserRound,
   Users,
@@ -33,9 +34,9 @@ import { NAV, ROLE_LABEL } from "@/lib/domain/labels";
 import { api } from "@/lib/client";
 import { cnJoin } from "./ui";
 
-const ICONS = { LayoutDashboard, Crosshair, Bot, Search, Building2, Users, Sparkles, Globe, Monitor, Kanban, MessagesSquare, Ban, Megaphone, Workflow, ChartColumn, UserRound, Plug, Settings, ScrollText };
+const ICONS = { LayoutDashboard, Crosshair, Bot, Search, Building2, Users, Sparkles, Globe, Monitor, Kanban, MessagesSquare, Ban, Megaphone, Workflow, ChartColumn, UserRound, Plug, Settings, ScrollText, ShieldCheck };
 
-export type ShellUser = { name: string; email: string; role: string; tenantId: string; tenantName: string };
+export type ShellUser = { name: string; email: string; role: string; tenantId: string; tenantName: string; isPlatformAdmin?: boolean };
 
 export function Shell({ user, children }: { user: ShellUser; children: ReactNode }) {
   const pathname = usePathname();
@@ -61,7 +62,7 @@ export function Shell({ user, children }: { user: ShellUser; children: ReactNode
 
   const unread = notes.filter((item) => !item.readAt).length;
   const connected = integrations.filter((item) => item.status === "connected").length;
-  const current = useMemo(() => NAV.find((item) => pathname.startsWith(item.href))?.label ?? "LeadFlow", [pathname]);
+  const current = useMemo(() => (pathname.startsWith("/admin") ? "Админка" : NAV.find((item) => pathname.startsWith(item.href))?.label ?? "LeadFlow"), [pathname]);
 
   async function logout() {
     await api("/api/auth/logout", { method: "POST" });
@@ -79,7 +80,7 @@ export function Shell({ user, children }: { user: ShellUser; children: ReactNode
         </div>
       </div>
       <div className="flex-1 space-y-1 overflow-y-auto px-3 pb-4">
-        {NAV.map((item) => {
+        {[...NAV, ...(user.isPlatformAdmin ? [{ href: "/admin", label: "Админка", icon: "ShieldCheck" }] : [])].map((item) => {
           const Icon = ICONS[item.icon as keyof typeof ICONS];
           const active = pathname.startsWith(item.href);
           return (

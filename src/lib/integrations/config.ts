@@ -86,7 +86,10 @@ export async function resolveIntegration(tenantId: string, provider: ProviderId)
       throw new ApiError(500, "Не удалось прочитать сохранённый секрет. Проверьте ENCRYPTION_KEY.", "secret_unreadable");
     }
   }
-  const secrets = { ...envSecrets(provider), ...Object.fromEntries(Object.entries(stored).filter(([, value]) => value)) };
+  // Из .env берутся только общие серверы (парсер, OpenRouter, Studio). Личные каналы — почта, Telegram,
+  // таблица, хранилище, WhatsApp, SMS — у каждого пространства свои, иначе данные одного аккаунта ушли бы в чужой канал.
+  const shared = provider === "parser" || provider === "openrouter" || provider === "studio";
+  const secrets = { ...(shared ? envSecrets(provider) : {}), ...Object.fromEntries(Object.entries(stored).filter(([, value]) => value)) };
   if (typeof config.baseUrl === "string") config.baseUrl = assertPublicBase(config.baseUrl, provider);
   const configured = hasMinimum(provider, secrets, config);
   return {

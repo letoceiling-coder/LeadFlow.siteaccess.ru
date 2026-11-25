@@ -552,7 +552,7 @@ export async function rewritePitch(tenantId: string, id: string) {
   return { text: banned.length ? draft : text, banned, fallback: banned.length > 0 };
 }
 
-export const CHANNELS = ["telegram", "whatsapp", "vk", "email", "phone", "instagram", "avito", "other"] as const;
+export const CHANNELS = ["telegram", "max", "whatsapp", "vk", "email", "phone", "instagram", "avito", "other"] as const;
 
 export const sentSchema = z.object({
   channel: z.enum(CHANNELS),
@@ -770,35 +770,80 @@ export async function nextItem(tenantId: string, excludeId?: string | null) {
   return fresh ? { id: fresh.id, kind: "review" as const } : null;
 }
 
-/** Последние поиски с воронкой: сколько пришло, сколько неполных, без фактов, готовых к ленте. */
-export async function searches(tenantId: string) {
-  const tasks = await prisma.parserTask.findMany({ where: { tenantId }, orderBy: { createdAt: "desc" }, take: 8 });
-  return Promise.all(tasks.map(async (task) => {
-    const summary = (task.resultSummary ?? {}) as { orgIds?: string[]; message?: string | null; counters?: { collected?: number; target?: number } | null };
-    const ids = Array.isArray(summary.orgIds) ? summary.orgIds : [];
-    const rows = ids.length ? await prisma.outreach.groupBy({ by: ["cardStatus", "priority"], where: { tenantId, organizationId: { in: ids } }, _count: { _all: true } }) : [];
-    const count = (fn: (row: (typeof rows)[number]) => boolean) => rows.filter(fn).reduce((sum, row) => sum + row._count._all, 0);
-    const input = (task.input ?? {}) as { city?: string; category?: string; maxResults?: number };
-    return {
-      id: task.id,
-      city: input.city ?? "",
-      category: input.category ?? "",
-      requested: input.maxResults ?? null,
-      status: task.status,
-      syncedAt: task.syncedAt,
-      createdAt: task.createdAt,
-      error: task.error,
-      received: task.organizationCount,
-      // Ход массового сбора: «Сбор карточек: собрано 9 из 20 · пауза, чтобы Яндекс не включил проверку».
-      stage: ["queued", "running"].includes(task.status) ? summary.message ?? null : null,
-      collected: summary.counters?.collected ?? null,
-      funnel: ids.length ? {
-        incomplete: count((row) => row.cardStatus === "incomplete"),
-        noFact: count((row) => row.cardStatus === "no_fact"),
-        review: count((row) => row.cardStatus === "no_fact" && row.priority === "C"),
-        ready: count((row) => row.cardStatus === "ready" && ["A", "B"].includes(row.priority)),
-        queued: count((row) => row.cardStatus === "queued"),
-      } : null,
-    };
-  }));
+type SearchTask = Awaited<ReturnType<typeof prisma.parserTask.findMany>>[number];
+type SearchSummary = { orgIds?: string[]; message?: string | null; stage?: string | null; stageLabel?: string | null; eta?: number | null; counters?: Record<string, number> | null; imported?: number; updated?: number };
+
+/** Строка поиска: ход сбора (этап, счётчики) и воронка карточек после сохранения. */
+async function searchRow(tenantId: string, task: SearchTask) {
+  const summary = (task.resultSummary ?? {}) as SearchSummary;
+  const ids = Array.isArray(summary.orgIds) ? summary.orgIds : [];
+  const rows = ids.length ? await prisma.outreach.groupBy({ by: ["cardStatus", "priority"], where: { tenantId, organizationId: { in: ids } }, _count: { _all: true } }) : [];
+  const count = (fn: (row: (typeof rows)[number]) => boolean) => rows.filter(fn).reduce((sum, row) => sum + row._count._all, 0);
+  const input = (task.input ?? {}) as { city?: string; category?: string; maxResults?: number };
+  const live = ["queued", "running"].includes(task.status);
+  const counters = live && summary.counters && typeof summary.counters === "object" ? summary.counters : null;
+  return {
+    id: task.id,
+    city: input.city ?? "",
+    category: input.category ?? "",
+    requested: input.maxResults ?? null,
+    status: task.status,
+    progress: task.progress,
+    syncedAt: task.syncedAt,
+    createdAt: task.createdAt,
+    startedAt: task.startedAt,
+    completedAt: task.completedAt,
+    error: task.error,
+    received: task.organizationCount,
+    // Ход массового сбора: «Сбор карточек: собрано 9 из 20 · пауза, чтобы Яндекс не включил проверку».
+    stage: live ? summary.message ?? null : null,
+    stageLabel: live ? summary.stageLabel ?? summary.stage ?? null : null,
+    eta: live ? summary.eta ?? null : null,
+    counters,
+    collected: counters?.collected ?? null,
+    imported: summary.imported ?? null,
+    funnel: ids.length ? {
+      total: count(() => true),
+      incomplete: count((row) => row.cardStatus === "incomplete"),
+      noFact: count((row) => row.cardStatus === "no_fact"),
+      review: count((row) => row.cardStatus === "no_fact" && row.priority === "C"),
+      ready: count((row) => row.cardStatus === "ready" && ["A", "B"].includes(row.priority)),
+      hot: count((row) => row.cardStatus === "ready" && row.priority === "A"),
+      queued: count((row) => ["queued", "pending"].includes(row.cardStatus)),
+      failed: count((row) => row.cardStatus === "failed"),
+    } : null,
+  };
+}
+
+/** История поисков с воронкой: сколько пришло, сколько неполных, без фактов, готовых к ленте. */
+export async function searches(tenantId: string, limit = 8) {
+  const tasks = await prisma.parserTask.findMany({ where: { tenantId }, orderBy: { createdAt: "desc" }, take: limit });
+  return Promise.all(tasks.map((task) => searchRow(tenantId, task)));
+}
+
+/** Один поиск целиком: ход сбора и найденные компании с оценкой. Только чтение базы — парсер не дёргаем. */
+export async function searchDetail(tenantId: string, id: string) {
+  const task = await prisma.parserTask.findFirst({ where: { id, tenantId } });
+  if (!task) throw new ApiError(404, "Поиск не найден", "not_found");
+  const row = await searchRow(tenantId, task);
+  const ids = ((task.resultSummary ?? {}) as SearchSummary).orgIds ?? [];
+  const items = ids.length ? await prisma.outreach.findMany({
+    where: { tenantId, organizationId: { in: ids } },
+    orderBy: [{ priority: "asc" }, { score: "desc" }],
+    take: 500,
+    select: { id: true, priority: true, score: true, cardStatus: true, status: true, organization: { select: { name: true, city: true, rating: true, reviewCount: true, website: true } } },
+  }) : [];
+  return {
+    ...row,
+    items: items.map((item) => ({ id: item.id, priority: item.priority, score: item.score, cardStatus: item.cardStatus, status: item.status, name: item.organization.name, city: item.organization.city, rating: item.organization.rating, reviewCount: item.organization.reviewCount, website: item.organization.website })),
+  };
+}
+
+/** Удаляет запись о поиске из истории. Найденные компании и карточки остаются в базе. */
+export async function deleteSearch(tenantId: string, id: string) {
+  const task = await prisma.parserTask.findFirst({ where: { id, tenantId }, select: { status: true } });
+  if (!task) throw new ApiError(404, "Поиск не найден", "not_found");
+  if (["queued", "running"].includes(task.status)) throw new ApiError(409, "Идущий поиск сначала остановите", "search_running");
+  await prisma.parserTask.deleteMany({ where: { id, tenantId } });
+  return { ok: true };
 }

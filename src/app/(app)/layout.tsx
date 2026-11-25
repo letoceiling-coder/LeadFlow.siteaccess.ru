@@ -9,7 +9,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const session = await getSession();
   if (!session) redirect("/login");
   return (
-    <Shell user={{ name: session.name, email: session.email, role: session.role, tenantId: session.tenantId, tenantName: session.tenantName }}>
+    <Shell user={{ name: session.name, email: session.email, role: session.role, tenantId: session.tenantId, tenantName: session.tenantName, isPlatformAdmin: session.isPlatformAdmin }}>
       {children}
     </Shell>
   );

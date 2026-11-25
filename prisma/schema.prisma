@@ -63,13 +63,50 @@ model Tenant {
 }
 
 model User {
-  id           String       @id @default(cuid())
-  email        String       @unique
-  name         String
-  passwordHash String
-  createdAt    DateTime     @default(now())
-  memberships  Membership[]
-  sessions     Session[]
+  id               String       @id @default(cuid())
+  email            String       @unique
+  name             String
+  passwordHash     String
+  /// active — работает; pending — зарегистрировался и ждёт, пока администратор выдаст доступ; blocked — вход закрыт.
+  status           String       @default("active")
+  isPlatformAdmin  Boolean      @default(false)
+  telegramId       String?      @unique
+  telegramUsername String?
+  /// false — email служебный (tg-…@telegram.local), человек вошёл только через Telegram.
+  emailVerified    Boolean      @default(false)
+  adminNote        String?
+  lastLoginAt      DateTime?
+  createdAt        DateTime     @default(now())
+  memberships      Membership[]
+  sessions         Session[]
+}
+
+/// Одноразовый вход: код на почту или подтверждение через Telegram-бота.
+model AuthCode {
+  id               String    @id @default(cuid())
+  kind             String
+  email            String?
+  codeHash         String    @unique
+  attempts         Int       @default(0)
+  name             String?
+  inviteToken      String?
+  telegramId       String?
+  telegramUsername String?
+  telegramName     String?
+  confirmedAt      DateTime?
+  consumedAt       DateTime?
+  expiresAt        DateTime
+  createdAt        DateTime  @default(now())
+
+  @@index([email, createdAt])
+}
+
+/// Настройки всей платформы (бот входа, почта для кодов, приём заявок). Секреты — в secretEnc.
+model PlatformSetting {
+  key       String   @id
+  value     Json
+  secretEnc String?
+  updatedAt DateTime @updatedAt
 }
 
 model Session {
@@ -98,8 +135,10 @@ model Invitation {
   id         String    @id @default(cuid())
   tenantId   String
   tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  email      String
+  /// Пусто — ссылку может принять любой, кто её открыл (для отправки в Telegram).
+  email      String?
   role       Role
+  note       String?
   tokenHash  String    @unique
   expiresAt  DateTime
   acceptedAt DateTime?

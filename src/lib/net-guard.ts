@@ -8,14 +8,14 @@ import { isPrivateIp } from "./domain/ip";
  * Проверяется не строка хоста, а все IP, в которые он резолвится: «x.attacker.com → 127.0.0.1» не пройдёт.
  */
 
-export async function assertPublicTarget(raw: string): Promise<{ ok: true; url: URL } | { ok: false; reason: string }> {
+export async function assertPublicTarget(raw: string, options: { allowHttp?: boolean } = {}): Promise<{ ok: true; url: URL } | { ok: false; reason: string }> {
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
     return { ok: false, reason: "адрес не разбирается" };
   }
-  if (url.protocol !== "https:") return { ok: false, reason: "нужен https" };
+  if (url.protocol !== "https:" && !(options.allowHttp && url.protocol === "http:")) return { ok: false, reason: "нужен https" };
   if (url.username || url.password) return { ok: false, reason: "логин и пароль в адресе запрещены" };
   const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
   if (!host.includes(".") && !isIP(host)) return { ok: false, reason: "нужно полное доменное имя" };

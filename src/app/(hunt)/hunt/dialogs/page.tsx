@@ -24,7 +24,8 @@ export default function HuntDialogsPage() {
 
   return (
     <div className="pt-2">
-      <h1 className="text-[32px] font-semibold leading-[38px] tracking-tight">Диалоги</h1>
+      <p className="text-sm text-[var(--h-faint)]">Шаг 3 из 5</p>
+      <h1 className="mt-1 text-[32px] font-semibold leading-[38px] tracking-tight">Диалоги</h1>
       <div className="sticky top-[68px] z-20 -mx-4 mt-5 px-4 py-2 backdrop-blur-md">
         <Segmented<Tab>
           value={tab}
@@ -36,9 +37,9 @@ export default function HuntDialogsPage() {
           ]}
         />
       </div>
-      <div className="mt-3 space-y-3">
-        {dialogs.error ? <Notice tone="error">{dialogs.error}</Notice> : !data ? <Skeleton rows={4} /> : list[tab].length === 0 ? (
-          <Empty title="Пусто" text={empty[tab]} />
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        {dialogs.error ? <div className="lg:col-span-2"><Notice tone="error">{dialogs.error}</Notice></div> : !data ? <div className="lg:col-span-2"><Skeleton rows={4} /></div> : list[tab].length === 0 ? (
+          <div className="lg:col-span-2"><Empty title="Пусто" text={empty[tab]} /></div>
         ) : list[tab].map((item) => (
           <ItemCard
             key={item.id}

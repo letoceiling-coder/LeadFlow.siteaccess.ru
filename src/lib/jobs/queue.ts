@@ -83,6 +83,39 @@ export async function claimJob() {
   });
 }
 
+/** Сколько задача может числиться «running», прежде чем её сочтут брошенной. Генерация сайта идёт долго. */
+const STALE_MS: Record<string, number> = { "site.generate": 90 * 60 * 1000 };
+const STALE_DEFAULT_MS = 30 * 60 * 1000;
+
+/**
+ * Вернуть в очередь задачи, которые остались «running», потому что обработчик упал или перезапустился посреди работы
+ * (например, при выкладке). Без этого они висят вечно: скоринг не завершается, а зависшая генерация сайта
+ * не даёт брать следующие.
+ *  • startedBefore — при старте обработчика: всё, что взято до старта, точно брошено (обработчик один и берёт задачи по одной).
+ *  • без него — периодическая проверка по времени для каждого типа.
+ * Попытки исчерпаны — задача помечается dead, как при обычной ошибке.
+ */
+export async function recoverStaleJobs(startedBefore?: Date) {
+  const running = await prisma.job.findMany({ where: { status: "running" }, select: { id: true, type: true, startedAt: true, attempts: true, maxAttempts: true } });
+  const now = Date.now();
+  let requeued = 0;
+  let dead = 0;
+  for (const job of running) {
+    const started = job.startedAt?.getTime() ?? 0;
+    const stale = startedBefore ? started < startedBefore.getTime() : now - started > (STALE_MS[job.type] ?? STALE_DEFAULT_MS);
+    if (!stale) continue;
+    const message = "Обработчик остановился во время задачи";
+    if (job.attempts >= job.maxAttempts) {
+      const done = await prisma.job.updateMany({ where: { id: job.id, status: "running" }, data: { status: "dead", error: message, finishedAt: new Date() } });
+      dead += done.count;
+    } else {
+      const done = await prisma.job.updateMany({ where: { id: job.id, status: "running" }, data: { status: "queued", error: message, runAt: new Date(), startedAt: null } });
+      requeued += done.count;
+    }
+  }
+  return { requeued, dead };
+}
+
 export async function finishJob(id: string, result: unknown) {
   await prisma.job.update({
     where: { id },

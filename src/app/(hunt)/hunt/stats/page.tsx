@@ -41,7 +41,8 @@ export default function HuntStatsPage() {
 
   return (
     <div className="pt-2">
-      <h1 className="text-[32px] font-semibold leading-[38px] tracking-tight">Цифры</h1>
+      <p className="text-sm text-[var(--h-faint)]">Шаг 5 из 5</p>
+      <h1 className="mt-1 text-[32px] font-semibold leading-[38px] tracking-tight">Цифры</h1>
       <div className="sticky top-[68px] z-20 -mx-4 mt-5 px-4 py-2 backdrop-blur-md">
         <Segmented value={days} onChange={setDays} items={[{ key: "7", label: "7 дней" }, { key: "14", label: "14 дней" }, { key: "30", label: "30 дней" }]} />
       </div>

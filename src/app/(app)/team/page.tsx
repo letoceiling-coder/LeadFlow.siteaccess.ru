@@ -6,7 +6,7 @@ import { useResource } from "@/components/use-resource";
 import { Button, Card, Field, Loading, PageTitle, State, controlClass } from "@/components/ui";
 import { ROLE_LABEL, formatDate } from "@/lib/domain/labels";
 
-type Team = { members: { id: string; membershipId: string; name: string; email: string; role: string }[]; invitations: { id: string; email: string; role: string; expiresAt: string }[] };
+type Team = { members: { id: string; membershipId: string; name: string; email: string; role: string }[]; invitations: { id: string; email: string | null; role: string; expiresAt: string }[] };
 
 export default function TeamPage() {
   const team = useResource<Team>("/api/team");
@@ -34,7 +34,7 @@ export default function TeamPage() {
             </div>
           ))}
           <h2 className="mt-4 font-semibold">Ожидают принятия</h2>
-          {team.data.invitations.length === 0 ? <p className="text-sm text-slate-500">Открытых приглашений нет</p> : team.data.invitations.map((item) => <p key={item.id} className="text-sm">{item.email} · {ROLE_LABEL[item.role]} · до {formatDate(item.expiresAt)}</p>)}
+          {team.data.invitations.length === 0 ? <p className="text-sm text-slate-500">Открытых приглашений нет</p> : team.data.invitations.map((item) => <p key={item.id} className="text-sm">{item.email ?? "любой по ссылке"} · {ROLE_LABEL[item.role]} · до {formatDate(item.expiresAt)}</p>)}
         </Card>
         <Card>
           <h2 className="mb-3 font-semibold">Пригласить</h2>

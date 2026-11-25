@@ -14,7 +14,7 @@ export default async function HuntLayout({ children }: { children: ReactNode }) 
   if (!session) redirect("/login");
   return (
     <Suspense>
-      <HuntShell user={{ name: session.name, role: session.role, tenantName: session.tenantName }}>{children}</HuntShell>
+      <HuntShell user={{ name: session.name, role: session.role, tenantName: session.tenantName, isPlatformAdmin: session.isPlatformAdmin }}>{children}</HuntShell>
     </Suspense>
   );
 }

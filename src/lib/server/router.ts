@@ -55,6 +55,33 @@ import { requireReady } from "../integrations/config";
 import { StudioClient } from "../integrations/studio";
 import { PIPELINE } from "../domain/labels";
 import { huntRoutes } from "./hunt-routes";
+import { sendAlert } from "../services/alerts";
+import { z } from "zod";
+import { invitationInfo } from "../services/account";
+import { linkTelegramToUser, pollTelegramLogin, requestEmailCode, startTelegramLogin, verifyEmailCode } from "../services/auth-flow";
+import { accessSettingsView, saveAccessSettings } from "../services/platform";
+import {
+  adminOverview,
+  assertPlatformAdmin,
+  changeMembershipRole,
+  createInviteLink,
+  createTenant,
+  createUser,
+  deleteUser,
+  grantAccess,
+  renameTenant,
+  revokeAccess,
+  revokeInvite,
+  testBot,
+  updateUser,
+} from "../services/admin";
+
+const roleEnum = z.enum(["OWNER", "ADMIN", "MANAGER", "ANALYST", "OPERATOR", "VIEWER"]);
+const inviteTokenField = z.string().trim().regex(/^[a-f0-9]{48}$/).optional().nullable();
+const emailCodeRequestSchema = z.object({ email: z.string().trim().email().max(160), name: z.string().trim().max(80).optional().nullable(), inviteToken: inviteTokenField });
+const emailCodeVerifySchema = z.object({ email: z.string().trim().email().max(160), code: z.string().trim().regex(/^\d{6}$/, "Код — 6 цифр"), inviteToken: inviteTokenField });
+const tgStartSchema = z.object({ name: z.string().trim().max(80).optional().nullable(), inviteToken: inviteTokenField });
+const tgPollSchema = z.object({ code: z.string().trim().regex(/^[a-f0-9]{32}$/) });
 
 function allow(session: AppSession, permission: string) {
   if (!can(session.role, permission)) throw new ApiError(403, "Недостаточно прав для этого действия", "forbidden");
@@ -65,6 +92,7 @@ function clientIp(request: Request) {
 }
 
 export async function dispatch(request: Request, path: string[]): Promise<Response> {
+  let alertTenant: string | null = null;
   try {
     if (request.method !== "GET" && request.method !== "HEAD") assertSameOrigin(request);
     const url = new URL(request.url);
@@ -85,6 +113,27 @@ export async function dispatch(request: Request, path: string[]): Promise<Respon
       const session = await loginAccount(body.email, body.password);
       return json({ user: publicUser(session) });
     }
+    // Вход и регистрация без пароля: код на почту или подтверждение в Telegram.
+    if (key === "POST auth/email/request") {
+      if (!rateLimit(`email-code:${clientIp(request)}`, 10, 15 * 60 * 1000)) throw new ApiError(429, "Слишком много запросов кода. Подождите.", "rate_limit");
+      return json(await requestEmailCode(emailCodeRequestSchema.parse(await readJson(request))));
+    }
+    if (key === "POST auth/email/verify") {
+      if (!rateLimit(`email-verify:${clientIp(request)}`, 20, 15 * 60 * 1000)) throw new ApiError(429, "Слишком много попыток. Подождите.", "rate_limit");
+      return json(await verifyEmailCode(emailCodeVerifySchema.parse(await readJson(request))));
+    }
+    if (key === "POST auth/telegram/start") {
+      if (!rateLimit(`tg-start:${clientIp(request)}`, 15, 15 * 60 * 1000)) throw new ApiError(429, "Слишком много попыток. Подождите.", "rate_limit");
+      return json(await startTelegramLogin(tgStartSchema.parse(await readJson(request))));
+    }
+    if (key === "POST auth/telegram/poll") {
+      if (!rateLimit(`tg-poll:${clientIp(request)}`, 400, 15 * 60 * 1000)) throw new ApiError(429, "Слишком много запросов. Подождите.", "rate_limit");
+      return json(await pollTelegramLogin(tgPollSchema.parse(await readJson(request)).code));
+    }
+    if (request.method === "GET" && path[0] === "auth" && path[1] === "invite" && path[2]) {
+      if (!/^[a-f0-9]{48}$/.test(path[2])) throw new ApiError(400, "Ссылка-приглашение повреждена", "invite_invalid");
+      return json(await invitationInfo(path[2]));
+    }
     if (key === "POST auth/logout") {
       const current = await getSession();
       if (current) await prisma.session.update({ where: { id: current.sessionId }, data: { revokedAt: new Date() } });
@@ -94,8 +143,11 @@ export async function dispatch(request: Request, path: string[]): Promise<Respon
 
     const session = await getSession();
     if (!session) throw new ApiError(401, "Войдите в систему", "auth_required");
+    alertTenant = session.tenantId;
 
     if (key === "GET auth/me") return json({ user: publicUser(session), members: await memberIds(session.tenantId) });
+    if (key === "POST auth/telegram/link") return json(await linkTelegramToUser(session.userId, tgPollSchema.parse(await readJson(request)).code));
+    if (path[0] === "admin") return await adminRoutes(request, session, path);
     if (key === "GET workspaces") {
       const rows = await prisma.membership.findMany({ where: { userId: session.userId }, include: { tenant: true } });
       return json(rows.map((row) => ({ id: row.tenantId, name: row.tenant.name, role: row.role, current: row.tenantId === session.tenantId })));
@@ -165,22 +217,22 @@ export async function dispatch(request: Request, path: string[]): Promise<Respon
       return json({ ok: true });
     }
 
-    if (path[0] === "organizations") return organizations(request, session, path, url);
-    if (path[0] === "parser") return parserRoutes(request, session, path, url);
-    if (path[0] === "analysis") return analysisRoutes(request, session, path);
-    if (path[0] === "sites") return siteRoutes(request, session, path);
-    if (path[0] === "crm") return crmRoutes(request, session, path);
-    if (path[0] === "communications") return communicationRoutes(request, session, path);
+    if (path[0] === "organizations") return await organizations(request, session, path, url);
+    if (path[0] === "parser") return await parserRoutes(request, session, path, url);
+    if (path[0] === "analysis") return await analysisRoutes(request, session, path);
+    if (path[0] === "sites") return await siteRoutes(request, session, path);
+    if (path[0] === "crm") return await crmRoutes(request, session, path);
+    if (path[0] === "communications") return await communicationRoutes(request, session, path);
     if (path[0] === "opt-outs" && request.method === "GET") {
       allow(session, "comms.read");
       return json(await listOptOuts(session.tenantId));
     }
-    if (path[0] === "campaigns") return campaignRoutes(request, session, path);
-    if (path[0] === "automations") return automationRoutes(request, session, path);
-    if (path[0] === "team") return teamRoutes(request, session, path);
-    if (path[0] === "integrations") return integrationRoutes(request, session, path);
-    if (path[0] === "agent") return agentRoutes(request, session, path);
-    if (path[0] === "hunt") return huntRoutes(request, session, path, url);
+    if (path[0] === "campaigns") return await campaignRoutes(request, session, path);
+    if (path[0] === "automations") return await automationRoutes(request, session, path);
+    if (path[0] === "team") return await teamRoutes(request, session, path);
+    if (path[0] === "integrations") return await integrationRoutes(request, session, path);
+    if (path[0] === "agent") return await agentRoutes(request, session, path);
+    if (path[0] === "hunt") return await huntRoutes(request, session, path, url);
     if (path[0] === "jobs" && path[1] && request.method === "GET") {
       const job = await prisma.job.findFirst({ where: { id: path[1], tenantId: session.tenantId } });
       if (!job) throw new ApiError(404, "Задача не найдена", "not_found");
@@ -188,12 +240,80 @@ export async function dispatch(request: Request, path: string[]): Promise<Respon
     }
     throw new ApiError(404, "Раздел не найден", "not_found");
   } catch (error) {
-    return toErrorResponse(error);
+    const response = toErrorResponse(error);
+    // Внутренние ошибки (500 и сбои внешних сервисов 502/504) — в Telegram пространства.
+    if (alertTenant && response.status >= 500) {
+      const where = `${request.method} /api/${path.join("/")}`;
+      const message = error instanceof Error ? error.message : String(error);
+      await sendAlert(alertTenant, `Ошибка ${response.status} в ${where}`, message, { key: `api:${where}` });
+    }
+    return response;
   }
 }
 
 function publicUser(session: AppSession) {
-  return { id: session.userId, email: session.email, name: session.name, role: session.role, tenantId: session.tenantId, tenantName: session.tenantName };
+  return { id: session.userId, email: session.email, name: session.name, role: session.role, tenantId: session.tenantId, tenantName: session.tenantName, isPlatformAdmin: session.isPlatformAdmin };
+}
+
+const grantSchema = z.object({ userId: z.string().min(1), tenantId: z.string().min(1), role: roleEnum, notify: z.boolean().optional() });
+const userPatchSchema = z.object({
+  status: z.enum(["active", "blocked", "pending"]).optional(),
+  isPlatformAdmin: z.boolean().optional(),
+  name: z.string().trim().min(2).max(80).optional(),
+  adminNote: z.string().max(500).nullable().optional(),
+  password: z.string().max(200).nullable().optional(),
+});
+const userCreateSchema = z.object({
+  email: z.string().trim().email().max(160),
+  name: z.string().trim().min(2).max(80),
+  tenantId: z.string().min(1),
+  role: roleEnum,
+  password: z.string().max(200).optional().nullable(),
+  isPlatformAdmin: z.boolean().optional(),
+  notify: z.boolean().optional(),
+});
+const tenantCreateSchema = z.object({ name: z.string().trim().min(2).max(80), ownerUserId: z.string().optional().nullable(), shareFrom: z.string().optional().nullable() });
+const adminInviteSchema = z.object({
+  tenantId: z.string().min(1),
+  role: roleEnum.exclude(["OWNER"]),
+  email: z.string().trim().email().max(160).optional().nullable().or(z.literal("")),
+  note: z.string().max(200).optional().nullable(),
+  days: z.number().int().min(1).max(30).optional(),
+  sendEmail: z.boolean().optional(),
+});
+const accessSettingsSchema = z.object({
+  allowRequests: z.boolean().optional(),
+  notifyAdmins: z.boolean().optional(),
+  botToken: z.string().max(200).nullable().optional(),
+  smtpHost: z.string().max(200).optional(),
+  smtpPort: z.number().int().min(1).max(65535).optional(),
+  smtpUser: z.string().max(200).optional(),
+  smtpFrom: z.string().max(200).optional(),
+  smtpPassword: z.string().max(500).nullable().optional(),
+});
+
+async function adminRoutes(request: Request, session: AppSession, path: string[]) {
+  assertPlatformAdmin(session);
+  const method = request.method;
+  const [, section, id, sub] = path;
+  if (method === "GET" && section === undefined) return json(await adminOverview());
+  if (section === "access-settings" && method === "GET") return json(await accessSettingsView());
+  if (section === "access-settings" && method === "PATCH") return json(await saveAccessSettings(accessSettingsSchema.parse(await readJson(request))));
+  if (section === "test-bot" && method === "POST") return json(await testBot(session));
+  if (section === "memberships" && method === "POST" && !id) return json(await grantAccess(session, grantSchema.parse(await readJson(request))), 201);
+  if (section === "memberships" && id && method === "PATCH") return json(await changeMembershipRole(session, id, z.object({ role: roleEnum }).parse(await readJson(request)).role));
+  if (section === "memberships" && id && method === "DELETE") return json(await revokeAccess(session, id));
+  if (section === "users" && method === "POST" && !id) return json(await createUser(session, userCreateSchema.parse(await readJson(request))), 201);
+  if (section === "users" && id && method === "PATCH" && !sub) return json(await updateUser(session, id, userPatchSchema.parse(await readJson(request))));
+  if (section === "users" && id && method === "DELETE") return json(await deleteUser(session, id));
+  if (section === "tenants" && method === "POST" && !id) return json(await createTenant(session, tenantCreateSchema.parse(await readJson(request))), 201);
+  if (section === "tenants" && id && method === "PATCH") return json(await renameTenant(id, z.object({ name: z.string() }).parse(await readJson(request)).name));
+  if (section === "invitations" && method === "POST" && !id) {
+    const body = adminInviteSchema.parse(await readJson(request));
+    return json(await createInviteLink(session, { ...body, email: body.email || null }), 201);
+  }
+  if (section === "invitations" && id && method === "DELETE") return json(await revokeInvite(id));
+  throw new ApiError(404, "Действие админки не найдено", "not_found");
 }
 
 async function organizations(request: Request, session: AppSession, path: string[], url: URL) {
@@ -575,7 +695,7 @@ async function communicationRoutes(request: Request, session: AppSession, path: 
     return json(await approveMessage(session.tenantId, session.userId, path[2], body.lawfulBasis, body.basisNote));
   }
   if (path[1] === "messages" && path[2] && path[3] === "send" && request.method === "POST") {
-    return json(await sendApprovedMessage(path[2], session.userId));
+    return json(await sendApprovedMessage(session.tenantId, path[2], session.userId));
   }
   if (path[1] === "templates" && request.method === "GET") return json(await prisma.messageTemplate.findMany({ where: { tenantId: session.tenantId }, orderBy: { createdAt: "desc" } }));
   if (path[1] === "templates" && request.method === "POST") {
@@ -672,7 +792,9 @@ async function automationRoutes(request: Request, session: AppSession, path: str
   }
   if (path[2] === "dry-run" && request.method === "POST") {
     const body = (await readJson(request)) as { payload?: Record<string, unknown> };
-    await runRule(path[1], body.payload ?? {}, true);
+    const rule = await prisma.automationRule.findFirst({ where: { id: path[1], tenantId: session.tenantId }, select: { id: true } });
+    if (!rule) throw new ApiError(404, "Правило не найдено", "not_found");
+    await runRule(path[1], body.payload ?? {}, true, session.tenantId);
     const runs = await prisma.automationRun.findMany({ where: { ruleId: path[1], tenantId: session.tenantId }, orderBy: { startedAt: "desc" }, take: 1 });
     return json(runs[0] ?? null);
   }

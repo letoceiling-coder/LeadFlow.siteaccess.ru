@@ -22,7 +22,8 @@ export default function HuntProjectsPage() {
 
   return (
     <div className="pt-2">
-      <h1 className="text-[32px] font-semibold leading-[38px] tracking-tight">Проекты</h1>
+      <p className="text-sm text-[var(--h-faint)]">Шаг 4 из 5</p>
+      <h1 className="mt-1 text-[32px] font-semibold leading-[38px] tracking-tight">Проекты</h1>
       {projects.data ? <p className="mt-1 text-[15px] text-[var(--h-muted)]">В работе на <b className="text-[var(--h-text)] tabular-nums">{rub(pipeline)}</b></p> : null}
 
       <div className="sticky top-[68px] z-20 -mx-4 mt-5 px-4 py-2 backdrop-blur-md">

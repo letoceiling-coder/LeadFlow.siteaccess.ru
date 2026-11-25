@@ -1,16 +1,28 @@
 "use client";
 
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/lib/client";
-import { Button, Card } from "@/components/ui";
+import { AuthCard, AuthPanel } from "@/components/auth-panel";
+import { Button, Loading } from "@/components/ui";
+import { ROLE_LABEL } from "@/lib/domain/labels";
+
+type Info = { tenantName: string; role: string; email: string | null };
+type Me = { user: { name: string; email: string } } | null;
 
 export default function InvitePage() {
   const params = useParams<{ token: string }>();
   const router = useRouter();
+  const [info, setInfo] = useState<Info | null>(null);
+  const [me, setMe] = useState<Me | undefined>(undefined);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+
+  useEffect(() => {
+    api<Info>(`/api/auth/invite/${params.token}`).then(setInfo).catch((reason) => setError(reason.message));
+    // Без api(): он уводит на /login при 401, а здесь гость — нормальная ситуация.
+    fetch("/api/auth/me").then((response) => (response.ok ? response.json() : null)).then((body) => setMe(body?.data ?? null)).catch(() => setMe(null));
+  }, [params.token]);
 
   async function accept() {
     setPending(true);
@@ -25,17 +37,36 @@ export default function InvitePage() {
     }
   }
 
+  if (error && !info) {
+    return (
+      <AuthCard title="Приглашение" text="Ссылка на доступ в LeadFlow">
+        <p className="text-sm text-red-700">{error}</p>
+      </AuthCard>
+    );
+  }
+  if (!info || me === undefined) {
+    return (
+      <AuthCard title="Приглашение" text="Ссылка на доступ в LeadFlow">
+        <Loading />
+      </AuthCard>
+    );
+  }
+
   return (
-    <main className="hunt hunt-glow lf-dark grid min-h-[100dvh] place-items-center px-4">
-      <Card className="w-full max-w-md">
-        <h1 className="text-xl font-semibold">Приглашение в пространство</h1>
-        <p className="mt-2 text-sm text-slate-600">Принять его может только вошедший пользователь с тем же email, на который отправлено приглашение. Код одноразовый.</p>
-        {error ? <p className="mt-3 text-sm text-red-700">{error}</p> : null}
-        <div className="mt-4 flex gap-2">
-          <Button pending={pending} onClick={accept}>Принять</Button>
-          <Link className="rounded-lg border border-line px-3 py-2 text-sm" href="/login">Войти</Link>
+    <AuthCard title="Вас пригласили в LeadFlow" text={`Пространство «${info.tenantName}» · ${ROLE_LABEL[info.role] ?? info.role}`}>
+      {info.email ? <p className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Приглашение выписано на <b>{info.email}</b> — войдите с этой почтой.</p> : null}
+      {me ? (
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600">Вы вошли как <b>{me.user.name}</b>. Принять приглашение для этой учётной записи?</p>
+          {error ? <p className="text-sm text-red-700">{error}</p> : null}
+          <Button pending={pending} className="w-full" onClick={accept}>Принять и открыть</Button>
         </div>
-      </Card>
-    </main>
+      ) : (
+        <>
+          <p className="mb-4 text-sm text-slate-600">Войдите любым удобным способом — доступ откроется сразу, ждать одобрения не нужно.</p>
+          <AuthPanel mode="invite" inviteToken={params.token} />
+        </>
+      )}
+    </AuthCard>
   );
 }
