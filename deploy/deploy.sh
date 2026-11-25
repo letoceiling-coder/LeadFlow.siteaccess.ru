@@ -1,11 +1,16 @@
 #!/bin/sh
 # Выкладка LeadFlow с локальной машины на сервер.
-# Берёт файлы, которые отслеживает git (с незакоммиченными правками), собирает на сервере
+# Коммитит и пушит всё, что изменено, выкладывает этот коммит, собирает на сервере
 # и проверяет /api/health. Если проверка не прошла — возвращает прежние образы и исходники.
 #
-#   sh deploy/deploy.sh
+#   sh deploy/deploy.sh "Что выкладываем"
+#
+# Порядок: проверка, что на сервере нет чужого кода → git add -A и коммит → git push текущей ветки →
+# сборка на сервере → /api/health → запись коммита в /root/leadflow-releases/last-commit.
+# Пуш не прошёл — выкладки нет.
 #
 # Переменные: LEADFLOW_HOST (root@31.192.111.33), LEADFLOW_PORT (2222),
+#             LEADFLOW_GIT_REMOTE (origin), LEADFLOW_MSG — сообщение коммита,
 #             LEADFLOW_FORCE=1 — выложить, даже если на сервере код, которого нет в вашей истории git.
 #
 # Выкладывают несколько человек. Выкладка заменяет src/public/prisma/tests целиком, поэтому сначала
@@ -39,6 +44,26 @@ else
   echo "  Отличается от вашего HEAD:"
   comm -3 "$TMP/head.list" "$TMP/server.list" | awk '{print $NF}' | LC_ALL=C sort -u | sed 's/^/    /'
   echo "  Заберите серверную версию и слейте её с вашей (см. deploy/sync-from-server.sh), затем повторите."
+  exit 1
+fi
+
+# Правило: на сервер попадает только то, что закоммичено и лежит в GitHub. Иначе следующий выкладывающий
+# не увидит этих правок и затрёт их. Сообщение коммита — первый аргумент или LEADFLOW_MSG.
+echo "→ Коммит"
+git add -A
+if git diff --cached --quiet; then
+  echo "  нечего коммитить, HEAD = $(git log -1 --format='%h %s')"
+else
+  git commit -q -m "${1:-${LEADFLOW_MSG:-Выкладка $STAMP}}"
+  echo "  $(git log -1 --format='%h %s')"
+fi
+
+REMOTE_NAME="${LEADFLOW_GIT_REMOTE:-origin}"
+BRANCH="$(git branch --show-current)"
+echo "→ Пуш $BRANCH в $REMOTE_NAME"
+if ! git push -q "$REMOTE_NAME" "HEAD:refs/heads/$BRANCH"; then
+  echo "✗ Пуш не прошёл — выкладка остановлена: на сервер не должен попасть код, которого нет в GitHub."
+  echo "  Проверьте доступ (git push $REMOTE_NAME $BRANCH) и повторите."
   exit 1
 fi
 
