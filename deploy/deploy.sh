@@ -5,16 +5,43 @@
 #
 #   sh deploy/deploy.sh
 #
-# Переменные: LEADFLOW_HOST (root@31.192.111.33), LEADFLOW_PORT (2222).
+# Переменные: LEADFLOW_HOST (root@31.192.111.33), LEADFLOW_PORT (2222),
+#             LEADFLOW_FORCE=1 — выложить, даже если на сервере код, которого нет в вашей истории git.
+#
+# Выкладывают несколько человек. Выкладка заменяет src/public/prisma/tests целиком, поэтому сначала
+# проверяем: код на сервере должен совпадать с одним из коммитов вашей истории (то есть чужая выкладка
+# уже влита к вам). Иначе — стоп: заберите изменения с сервера и слейте их, потом выкладывайте.
 set -eu
 
 HOST="${LEADFLOW_HOST:-root@31.192.111.33}"
 PORT="${LEADFLOW_PORT:-2222}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-ARCHIVE="$(mktemp -d)/leadflow-src.tgz"
+TMP="$(mktemp -d)"
+ARCHIVE="$TMP/leadflow-src.tgz"
 
 cd "$ROOT"
+echo "→ Проверяю, что на сервере нет чужих изменений"
+# Список «git-хеш путь» для кода на сервере (без .env, данных и сборки).
+ssh -p "$PORT" "$HOST" 'cd /opt/leadflow && find . -type f -not -path "./node_modules/*" -not -path "./.next/*" -not -path "./data/*" -not -name .env -not -name tsconfig.tsbuildinfo -not -name "=" | sed "s#^\./##" | while IFS= read -r f; do printf "%s %s\n" "$(git hash-object "$f")" "$f"; done | LC_ALL=C sort' > "$TMP/server.list"
+match=""
+for c in $(git rev-list --max-count=500 HEAD); do
+  git -c core.quotePath=false ls-tree -r --format='%(objectname) %(path)' "$c" | LC_ALL=C sort > "$TMP/commit.list"
+  if cmp -s "$TMP/server.list" "$TMP/commit.list"; then match="$c"; break; fi
+done
+if [ -n "$match" ]; then
+  echo "  сервер = коммит $(git log -1 --format='%h %s' "$match")"
+elif [ "${LEADFLOW_FORCE:-}" = "1" ]; then
+  echo "  ⚠ кода с сервера нет в вашей истории — выкладываю из-за LEADFLOW_FORCE=1"
+else
+  git -c core.quotePath=false ls-tree -r --format='%(objectname) %(path)' HEAD | LC_ALL=C sort > "$TMP/head.list"
+  echo "✗ На сервере код, которого нет в вашей истории git (кто-то выложил свою версию)."
+  echo "  Отличается от вашего HEAD:"
+  comm -3 "$TMP/head.list" "$TMP/server.list" | awk '{print $NF}' | LC_ALL=C sort -u | sed 's/^/    /'
+  echo "  Заберите серверную версию и слейте её с вашей (см. deploy/sync-from-server.sh), затем повторите."
+  exit 1
+fi
+
 echo "→ Упаковываю исходники"
 git ls-files -z --cached --others --exclude-standard | COPYFILE_DISABLE=1 tar --no-xattrs -czf "$ARCHIVE" --null -T -
 
@@ -65,3 +92,7 @@ REMOTE
 
 echo "→ Проверка снаружи"
 curl -fsS -m 15 https://leadflow.siteaccess.ru/api/health && echo
+
+# Запоминаем, из какого коммита выложено: это база для слияния в deploy/sync-from-server.sh.
+dirty=""; git diff --quiet HEAD 2>/dev/null || dirty=" (+незакоммиченные правки)"
+ssh -p "$PORT" "$HOST" "echo '$(git rev-parse HEAD)$dirty' > /root/leadflow-releases/last-commit"
