@@ -5,12 +5,13 @@
 #
 #   sh deploy/deploy.sh "Что выкладываем"
 #
-# Порядок: проверка, что на сервере нет чужого кода → git add -A и коммит → git push текущей ветки →
+# Порядок: только из main и только если он не отстал от GitHub → на сервере нет чужого кода →
+# git add -A и коммит → git push main →
 # сборка на сервере → /api/health → запись коммита в /root/leadflow-releases/last-commit.
 # Пуш не прошёл — выкладки нет.
 #
 # Переменные: LEADFLOW_HOST (root@31.192.111.33), LEADFLOW_PORT (2222),
-#             LEADFLOW_GIT_REMOTE (origin), LEADFLOW_MSG — сообщение коммита,
+#             LEADFLOW_GIT_REMOTE (origin), LEADFLOW_BRANCH (main), LEADFLOW_MSG — сообщение коммита,
 #             LEADFLOW_FORCE=1 — выложить, даже если на сервере код, которого нет в вашей истории git.
 #
 # Выкладывают несколько человек. Выкладка заменяет src/public/prisma/tests целиком, поэтому сначала
@@ -26,6 +27,27 @@ TMP="$(mktemp -d)"
 ARCHIVE="$TMP/leadflow-src.tgz"
 
 cd "$ROOT"
+# Одна общая ветка выкладки — main. Остальные ветки — черновики: слейте их в main, потом выкладывайте.
+# Иначе один выкладывает из design, другой из main, и ветки (а с ними сервер) снова расходятся.
+REMOTE_NAME="${LEADFLOW_GIT_REMOTE:-origin}"
+DEPLOY_BRANCH="${LEADFLOW_BRANCH:-main}"
+BRANCH="$(git branch --show-current)"
+if [ "$BRANCH" != "$DEPLOY_BRANCH" ]; then
+  echo "✗ Выкладка только из $DEPLOY_BRANCH, а вы в «${BRANCH:-detached HEAD}»."
+  echo "  git checkout $DEPLOY_BRANCH && git merge $BRANCH — и повторите."
+  exit 1
+fi
+echo "→ Сверяю $DEPLOY_BRANCH с GitHub"
+if ! git fetch -q "$REMOTE_NAME" "$DEPLOY_BRANCH"; then
+  echo "✗ Не удалось получить $REMOTE_NAME/$DEPLOY_BRANCH — без сверки с GitHub не выкладываю."; exit 1
+fi
+if ! git merge-base --is-ancestor FETCH_HEAD HEAD; then
+  echo "✗ В GitHub в $DEPLOY_BRANCH есть коммиты, которых нет у вас (кто-то уже запушил):"
+  git log --oneline HEAD..FETCH_HEAD | sed 's/^/    /'
+  echo "  Заберите их: git pull --no-rebase $REMOTE_NAME $DEPLOY_BRANCH — и повторите."
+  exit 1
+fi
+
 echo "→ Проверяю, что на сервере нет чужих изменений"
 # Список «git-хеш путь» для кода на сервере (без .env, данных и сборки).
 ssh -p "$PORT" "$HOST" 'cd /opt/leadflow && find . -type f -not -path "./node_modules/*" -not -path "./.next/*" -not -path "./data/*" -not -name .env -not -name tsconfig.tsbuildinfo -not -name "=" | sed "s#^\./##" | while IFS= read -r f; do printf "%s %s\n" "$(git hash-object "$f")" "$f"; done | LC_ALL=C sort' > "$TMP/server.list"
@@ -58,8 +80,6 @@ else
   echo "  $(git log -1 --format='%h %s')"
 fi
 
-REMOTE_NAME="${LEADFLOW_GIT_REMOTE:-origin}"
-BRANCH="$(git branch --show-current)"
 echo "→ Пуш $BRANCH в $REMOTE_NAME"
 if ! git push -q "$REMOTE_NAME" "HEAD:refs/heads/$BRANCH"; then
   echo "✗ Пуш не прошёл — выкладка остановлена: на сервер не должен попасть код, которого нет в GitHub."
