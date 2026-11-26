@@ -35,6 +35,8 @@ export async function createSearch(tenantId: string, userId: string, input: Sear
         OR: [{ idempotencyKey: keyBase }, { idempotencyKey: { startsWith: `${keyBase}:run:` } }],
         createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
         status: { in: ["queued", "running", "completed"] },
+        // Сбор, который ничего не нашёл, не должен сутки блокировать повтор.
+        NOT: { status: "completed", organizationCount: 0 },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -72,6 +74,7 @@ export async function submitParserTask(taskId: string, ready?: Awaited<ReturnTyp
   const integration = ready ?? (await requireReady(task.tenantId, "parser", "Поиск организаций"));
   const input = task.input as Record<string, unknown>;
   if (task.type === "organizations.collect") {
+    const attempts = Array.isArray(input.attempts) ? (input.attempts as { workerId?: string }[]) : [];
     const body = (await clientFrom(integration).collect(
       {
         city: input.city,
@@ -84,7 +87,8 @@ export async function submitParserTask(taskId: string, ready?: Awaited<ReturnTyp
         maxCostUsd: 0.3,
         priority: 5,
       },
-      task.id.replace(/[^A-Za-z0-9._:-]/g, "").slice(0, 120),
+      `${task.id.replace(/[^A-Za-z0-9._:-]/g, "").slice(0, 110)}${attempts.length ? `:r${attempts.length}` : ""}`,
+      attempts.map((item) => item.workerId).filter((id): id is string => Boolean(id)),
     )) as { taskId?: string; status?: { status?: string; progress?: number } };
     if (!body.taskId) throw new ApiError(502, "Парсер не вернул номер сбора.", "parser_shape");
     return prisma.parserTask.update({ where: { id: task.id }, data: { externalId: body.taskId, status: body.status?.status || "queued", progress: body.status?.progress ?? 0, startedAt: new Date() } });
@@ -123,8 +127,15 @@ export async function refreshParserTask(tenantId: string, id: string) {
   if (["failed", "cancelled"].includes(task.status) || (task.status === "completed" && task.syncedAt)) return task;
   const integration = await requireReady(tenantId, "parser", "Обновление задачи");
   if (task.type === "organizations.collect") {
-    const st = (await clientFrom(integration).collectStatus(task.externalId)) as { status?: string; stage?: string; stageLabel?: string; progress?: number; message?: string; counters?: Record<string, number>; error?: string | null; etaSeconds?: number | null; eta?: unknown };
+    const st = (await clientFrom(integration).collectStatus(task.externalId)) as { status?: string; stage?: string; stageLabel?: string; progress?: number; message?: string; counters?: Record<string, number>; counts?: Record<string, number>; workerId?: string; error?: string | null; etaSeconds?: number | null; eta?: unknown };
     const status = collectStatusOf(st.status, task.status);
+    // Яндекс иногда на несколько минут отдаёт одному серверу парсера пустую выдачу. Такой сбор — не «готово, 0»,
+    // а повод отдать задачу другому серверу; после нескольких пустых попыток — понятная ошибка.
+    const collected = st.counts?.collected ?? st.counters?.collected;
+    if (status === "completed" && collected === 0) {
+      const empty = await retryEmptyCollect(task, st.workerId ?? null, st.error ?? st.message ?? null);
+      return empty;
+    }
     // updateMany с условием: параллельная отмена не перетирается устаревшим опросом.
     await prisma.parserTask.updateMany({
       where: { id: task.id, status: { notIn: ["cancelled"] } },
@@ -162,6 +173,46 @@ export async function refreshParserTask(tenantId: string, id: string) {
     await notify(tenantId, "Поиск организаций", `Задача «${String((updated.input as { city?: string }).city ?? "")}» — ${updated.status}.`, "/search");
   }
   return prisma.parserTask.findUniqueOrThrow({ where: { id } });
+}
+
+export const EMPTY_COLLECT_ATTEMPTS = 3;
+
+async function retryEmptyCollect(task: Awaited<ReturnType<typeof prisma.parserTask.findUniqueOrThrow>>, workerId: string | null, reason: string | null) {
+  const input = (task.input ?? {}) as Record<string, unknown>;
+  const attempts = [...(Array.isArray(input.attempts) ? (input.attempts as Record<string, unknown>[]) : []), { workerId, externalId: task.externalId, at: new Date().toISOString(), reason: reason ? String(reason).slice(0, 200) : null }];
+  const meta = input as { city?: string; category?: string };
+  if (attempts.length >= EMPTY_COLLECT_ATTEMPTS) {
+    const error = `Яндекс Карты не отдали выдачу ни одному серверу парсера (${attempts.length} попытки). Это временно — повторите поиск через 15–30 минут.`;
+    await prisma.parserTask.updateMany({
+      where: { id: task.id, status: { notIn: ["cancelled"] } },
+      data: { status: "failed", error, input: { ...input, attempts } as Prisma.InputJsonValue, completedAt: new Date(), organizationCount: 0 },
+    });
+    await notify(task.tenantId, "Охота: сбор", `${meta.category ?? "Поиск"}, ${meta.city ?? ""}: ${error}`, "/hunt");
+    return prisma.parserTask.findUniqueOrThrow({ where: { id: task.id } });
+  }
+  const moved = await prisma.parserTask.updateMany({
+    where: { id: task.id, externalId: task.externalId, status: { notIn: ["cancelled"] } },
+    data: {
+      externalId: null,
+      status: "queued",
+      progress: 0,
+      error: null,
+      input: { ...input, attempts } as Prisma.InputJsonValue,
+      resultSummary: { stage: "retry", stageLabel: `Выдача на сервере ${workerId ?? "парсера"} пустая — пробуем другой сервер (попытка ${attempts.length + 1} из ${EMPTY_COLLECT_ATTEMPTS})`, message: null, counters: null, eta: null },
+    },
+  });
+  if (!moved.count) return prisma.parserTask.findUniqueOrThrow({ where: { id: task.id } });
+  try {
+    await submitParserTask(task.id);
+  } catch (error) {
+    if (!(error instanceof RetryableError)) {
+      await prisma.parserTask.update({ where: { id: task.id }, data: { status: "failed", error: publicErrorMessage(error) } });
+      throw error;
+    }
+    // Парсер занят: задача остаётся в очереди, повторная отправка — отдельной задачей.
+    await enqueueJob({ tenantId: task.tenantId, type: "parser.submit", payload: { parserTaskId: task.id }, delayMs: error.delayMs, idempotencyKey: `submit:${task.id}:r${attempts.length}` });
+  }
+  return prisma.parserTask.findUniqueOrThrow({ where: { id: task.id } });
 }
 
 function summarize(result: unknown): Prisma.InputJsonValue {

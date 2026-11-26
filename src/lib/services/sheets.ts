@@ -184,10 +184,15 @@ export async function sheetStatus(tenantId: string) {
     prisma.job.count({ where: { tenantId, type: { in: ["sheets.push", "sheets.full"] }, status: { in: ["queued", "running"] } } }),
   ]);
   const failed = await prisma.job.findFirst({ where: { tenantId, type: { in: ["sheets.push", "sheets.full"] }, status: { in: ["failed", "dead"] } }, orderBy: { finishedAt: "desc" }, select: { error: true, finishedAt: true } });
+  // Старая упавшая выгрузка не должна висеть ошибкой, если после неё выгрузки проходили.
+  const lastOk = failed?.finishedAt
+    ? await prisma.job.findFirst({ where: { tenantId, type: { in: ["sheets.push", "sheets.full"] }, status: "completed", finishedAt: { gt: failed.finishedAt } }, select: { id: true } })
+    : null;
+  const jobError = failed && !lastOk ? failed.error : null;
   return {
     configured: integration.configured,
     status: integration.status,
-    lastError: integration.lastError ?? failed?.error ?? null,
+    lastError: integration.lastError ?? jobError ?? null,
     leads,
     projects,
     lastSyncAt: lastLead?.sheetSyncedAt ?? null,

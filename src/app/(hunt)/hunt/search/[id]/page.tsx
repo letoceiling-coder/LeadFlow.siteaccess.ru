@@ -222,7 +222,7 @@ export default function HuntSearchDetailPage({ params }: { params: Promise<{ id:
             {data.items.length === 0 ? (
               <Empty
                 title={live ? "Компании появятся после сбора" : "Компаний нет"}
-                text={live ? "Парсер собирает карточки с карт. Когда сбор закончится, они сохранятся сюда и сразу пойдут в скоринг — список будет заполняться на глазах." : "Парсер ничего не вернул. Попробуйте другой город или нишу."}
+                text={live ? "Парсер собирает карточки с карт. Когда сбор закончится, они сохранятся сюда и сразу пойдут в скоринг — список будет заполняться на глазах." : (phase.failed && data.error ? data.error : "Парсер ничего не вернул. Нажмите «Повторить» — сбор уйдёт на другой сервер парсера.")}
               />
             ) : items.length === 0 ? <p className="text-sm text-[var(--h-muted)]">В этой группе пусто.</p> : (
               <div className="glass divide-y divide-[var(--h-line)] overflow-hidden rounded-2xl">

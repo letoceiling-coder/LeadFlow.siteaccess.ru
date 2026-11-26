@@ -52,12 +52,15 @@ export class ParserClient {
   }
 
   /** Свободный серверный обработчик с нужной возможностью; если все заняты — любой серверный на связи (задача подождёт его). */
-  async serverWorker(capability: string): Promise<string> {
+  async serverWorker(capability: string, exclude: string[] = []): Promise<string> {
     if (!workerCache || workerCache.base !== this.baseUrl || Date.now() - workerCache.at > 15_000) {
       const body = (await this.call("/api/v1/workers")) as { workers?: WorkerRow[] };
       workerCache = { at: Date.now(), base: this.baseUrl, list: body.workers ?? [] };
     }
-    const online = workerCache.list.filter((item) => SERVER_WORKERS.includes(item.id) && item.connected !== false && (!item.capabilities || item.capabilities.includes(capability)));
+    const capable = workerCache.list.filter((item) => SERVER_WORKERS.includes(item.id) && item.connected !== false && (!item.capabilities || item.capabilities.includes(capability)));
+    // Повтор после пустой выдачи: сначала другие серверы; если других нет на связи — любой серверный.
+    const fresh = capable.filter((item) => !exclude.includes(item.id));
+    const online = fresh.length ? fresh : capable;
     if (!online.length) throw new RetryableError(`Серверные обработчики парсера (${SERVER_WORKERS.join(", ")}) не на связи — ждём их, на домашние ПК задачу не отдаём.`, 60_000);
     const free = online.filter((item) => !item.busy);
     const pool = free.length ? free : online;
@@ -106,8 +109,8 @@ export class ParserClient {
   }
 
   /** Массовый сбор организаций: промпт или город + категория, до 500 карточек, со всеми полями. */
-  async collect(body: Record<string, unknown>, idempotencyKey: string) {
-    const workerId = await this.serverWorker("task:organizations.agent");
+  async collect(body: Record<string, unknown>, idempotencyKey: string, excludeWorkers: string[] = []) {
+    const workerId = await this.serverWorker("task:organizations.agent", excludeWorkers);
     return this.call("/api/v1/organizations/collect", { method: "POST", body: JSON.stringify({ ...body, workerId }), headers: { "Idempotency-Key": idempotencyKey } }, [200, 201, 202]);
   }
 
