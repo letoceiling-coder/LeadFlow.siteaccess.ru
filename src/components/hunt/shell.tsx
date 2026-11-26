@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { BarChart3, ChevronRight, CircleHelp, FolderKanban, LayoutGrid, ListChecks, MessagesSquare, Search, Workflow, Settings2, ShieldCheck } from "lucide-react";
+import { BarChart3, ChevronRight, CircleHelp, FolderKanban, LayoutGrid, ListChecks, MessagesSquare, Radar, Search, Workflow, Settings2, ShieldCheck } from "lucide-react";
 import { IconButton, ToastProvider, cx } from "./ui";
 import { GuidePanel } from "./guide-panel";
 import { ItemPanel } from "./item-panel";
@@ -37,6 +37,7 @@ const NAV = [
   { href: "/hunt", label: "Отбор", hint: "скоринг и карточки", icon: ListChecks },
   { href: "/hunt/dialogs", label: "Диалоги", hint: "написать и вести", icon: MessagesSquare },
   { href: "/hunt/pipeline", label: "Воронка", hint: "весь цикл по шагам", icon: Workflow },
+  { href: "/hunt/radar", label: "Радар", hint: "запросы из чатов", icon: Radar },
   { href: "/hunt/projects", label: "Проекты", hint: "сделки и демо", icon: FolderKanban },
   { href: "/hunt/stats", label: "Цифры", hint: "воронка и таблица", icon: BarChart3 },
 ] as const;
@@ -139,7 +140,7 @@ export function HuntShell({ user, children }: { user: HuntUser; children: ReactN
 
           {/* Телефон: нижняя панель вкладок, как в приложении. */}
           <nav aria-label="Разделы" className="glass-sheet fixed inset-x-0 bottom-0 z-40 rounded-none border-x-0 border-b-0 pb-[env(safe-area-inset-bottom)] md:hidden">
-            <div className="mx-auto grid max-w-lg grid-cols-6">
+            <div className="mx-auto grid max-w-lg" style={{ gridTemplateColumns: `repeat(${NAV.length}, minmax(0, 1fr))` }}>
               {NAV.map((tab) => {
                 const on = isActive(tab.href, pathname);
                 const Icon = tab.icon;

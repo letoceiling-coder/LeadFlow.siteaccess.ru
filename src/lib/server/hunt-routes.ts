@@ -39,6 +39,7 @@ import { aiStatus, aiUpdateSchema, updateAi } from "../services/ai-settings";
 import { demoEditSchema, demoStartSchema, editDemo, getDemo, previewDemo, publishDemo, rebuildDemo, startDemo } from "../services/hunt-demo";
 import { pipeline, pipelineQuerySchema } from "../services/pipeline";
 import { alertStatus, confirmBinding, startBinding, testAlert, unbindTelegram } from "../services/alerts";
+import { radarRoutes } from "./radar-routes";
 
 const bindSchema = z.object({ botToken: z.string().trim().max(200).optional() });
 
@@ -65,6 +66,8 @@ export async function huntRoutes(request: Request, session: AppSession, path: st
   const method = request.method;
   const [, section, id, action] = path;
 
+  // Радар намерений (S3): свой блок маршрутов.
+  if (section === "radar") return radarRoutes(request, session, path.slice(2), url);
   if (section === "today" && method === "GET") {
     allow(session, "org.read");
     return json(await today(tenantId, int(url.searchParams.get("limit"), 20, 1, 50)));

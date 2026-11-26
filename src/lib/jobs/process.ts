@@ -14,6 +14,7 @@ import { markQualifyFailed, runQualify } from "../services/hunt";
 import { runSheetFull, runSheetPush } from "../services/sheets";
 import { deliverWebhook } from "../services/projects";
 import { generateProposal } from "../services/proposals";
+import { runRadarPoll } from "../services/radar";
 
 const JOB_LABEL: Record<string, string> = {
   "parser.submit": "запуск поиска в парсере",
@@ -31,6 +32,7 @@ const JOB_LABEL: Record<string, string> = {
   "sheets.full": "выгрузка в Google Таблицу",
   "hunt.proposal": "КП-презентация",
   "project.webhook": "отправка проекта по API",
+  "radar.poll": "радар: чтение открытых чатов",
 };
 
 type JobRow = { id: string; tenantId: string; type: string; payload: unknown; cancelRequested: boolean };
@@ -131,6 +133,14 @@ export async function processJob(job: JobRow) {
     else if (job.type === "sheets.full") await runSheetFull(job.tenantId);
     else if (job.type === "hunt.proposal") await generateProposal(String(data.outreachId), job.tenantId);
     else if (job.type === "project.webhook") await deliverWebhook(String(data.projectId), String(data.event), job.tenantId);
+    else if (job.type === "radar.poll") {
+      // Радар опрашивает чаты по расписанию: задача сама себя переставляет на следующий проход.
+      const nextMs = await runRadarPoll(String(data.projectId), job.tenantId);
+      if (nextMs != null) {
+        await reschedule(job.id, nextMs);
+        return;
+      }
+    }
     else throw new FatalJobError(`Неизвестный тип задачи ${job.type}`);
     await finishJob(job.id, { ok: true });
     logEvent("job.done", { ...base, ms: Date.now() - started });
