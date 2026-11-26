@@ -1050,3 +1050,119 @@ model TelegramSearch {
 
   @@index([tenantId, createdAt])
 }
+
+// ───────────── Радар (S3): намерения из открытых Telegram-чатов ─────────────
+// Связи с Tenant нарочно не объявлены (только tenantId + индекс), чтобы не править общую модель Tenant.
+
+/// Настройки радара пространства: общий лимит чтений Telegram (аккаунт один на всех).
+model RadarConfig {
+  tenantId       String   @id
+  readsPerMinute Int      @default(12)
+  updatedAt      DateTime @updatedAt
+}
+
+/// Проект радара: свой (студии) или проект-клиент со своим ботом.
+model RadarProject {
+  id              String          @id @default(cuid())
+  tenantId        String
+  name            String
+  kind            String          @default("own") // own | client
+  target          String?         @db.Text // кого ищем, своими словами — уходит в промпт
+  keywords        String[]        @default([])
+  minusWords      String[]        @default([])
+  active          Boolean         @default(true)
+  pollMinutes     Int             @default(15)
+  minScore        Int             @default(40)
+  botTokenEnc     String?         @db.Text
+  botUsername     String?
+  botChatId       String?
+  botChatTitle    String?
+  bindCodeHash    String?
+  bindExpiresAt   DateTime?
+  hookSecretHash  String?
+  lastPollAt      DateTime?
+  lastReportAt    DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  sources         RadarSource[]
+  findings        RadarFinding[]
+  feedback        RadarFeedback[]
+
+  @@index([tenantId, active])
+}
+
+/// Открытый чат или канал Telegram, который читает радар (без вступления).
+model RadarSource {
+  id           String         @id @default(cuid())
+  tenantId     String
+  projectId    String
+  project      RadarProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  username     String
+  title        String
+  type         String
+  members      Int?
+  active       Boolean        @default(true)
+  cursor       Int?
+  lastPolledAt DateTime?
+  lastError    String?
+  readCount    Int            @default(0)
+  matchCount   Int            @default(0)
+  createdAt    DateTime       @default(now())
+  findings     RadarFinding[]
+
+  @@unique([projectId, username])
+  @@index([tenantId])
+}
+
+/// Находка: сообщение с запросом, разобранное моделью.
+model RadarFinding {
+  id             String        @id @default(cuid())
+  tenantId       String
+  projectId      String
+  project        RadarProject  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceId       String
+  source         RadarSource   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  messageId      Int
+  chatUsername   String
+  chatTitle      String
+  authorUsername String?
+  authorName     String?
+  text           String        @db.Text
+  link           String?
+  postedAt       DateTime
+  summary        String?       @db.Text
+  intent         String        @default("other")
+  city           String?
+  district       String?
+  deadline       String?
+  budget         String?
+  score          Int           @default(0)
+  penalty        Int           @default(0)
+  reply          String?       @db.Text
+  matched        String[]      @default([])
+  status         String        @default("new") // new | taken | rejected | later
+  snoozeUntil    DateTime?
+  organizationId String?
+  botMessageId   Int?
+  model          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([sourceId, messageId])
+  @@index([tenantId, projectId, status, createdAt])
+}
+
+/// «Не то»: пример, по которому радар понижает похожие сообщения.
+model RadarFeedback {
+  id        String       @id @default(cuid())
+  tenantId  String
+  projectId String
+  project   RadarProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  findingId String?
+  kind      String       @default("not_relevant")
+  text      String       @db.Text
+  via       String       @default("web") // web | bot
+  createdAt DateTime     @default(now())
+
+  @@index([projectId, createdAt])
+}

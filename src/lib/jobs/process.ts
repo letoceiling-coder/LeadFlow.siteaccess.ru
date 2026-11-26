@@ -15,6 +15,7 @@ import { runSheetFull, runSheetPush } from "../services/sheets";
 import { deliverWebhook } from "../services/projects";
 import { generateProposal } from "../services/proposals";
 import { runTelegramSearchStep } from "../services/telegram-source";
+import { runRadarPoll } from "../services/radar";
 
 const JOB_LABEL: Record<string, string> = {
   "parser.submit": "запуск поиска в парсере",
@@ -33,6 +34,7 @@ const JOB_LABEL: Record<string, string> = {
   "hunt.proposal": "КП-презентация",
   "project.webhook": "отправка проекта по API",
   "telegram.search": "поиск Telegram-каналов",
+  "radar.poll": "радар: чтение открытых чатов",
 };
 
 type JobRow = { id: string; tenantId: string; type: string; payload: unknown; cancelRequested: boolean };
@@ -138,6 +140,14 @@ export async function processJob(job: JobRow) {
       const step = await runTelegramSearchStep(String(data.searchId), job.tenantId);
       if (!step.done) {
         await reschedule(job.id, step.delayMs ?? 500);
+        return;
+      }
+    }
+    else if (job.type === "radar.poll") {
+      // Радар опрашивает чаты по расписанию: задача сама себя переставляет на следующий проход.
+      const nextMs = await runRadarPoll(String(data.projectId), job.tenantId);
+      if (nextMs != null) {
+        await reschedule(job.id, nextMs);
         return;
       }
     }
