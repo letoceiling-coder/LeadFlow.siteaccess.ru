@@ -14,6 +14,7 @@ import { markQualifyFailed, runQualify } from "../services/hunt";
 import { runSheetFull, runSheetPush } from "../services/sheets";
 import { deliverWebhook } from "../services/projects";
 import { generateProposal } from "../services/proposals";
+import { runTelegramSearchStep } from "../services/telegram-source";
 
 const JOB_LABEL: Record<string, string> = {
   "parser.submit": "запуск поиска в парсере",
@@ -31,6 +32,7 @@ const JOB_LABEL: Record<string, string> = {
   "sheets.full": "выгрузка в Google Таблицу",
   "hunt.proposal": "КП-презентация",
   "project.webhook": "отправка проекта по API",
+  "telegram.search": "поиск Telegram-каналов",
 };
 
 type JobRow = { id: string; tenantId: string; type: string; payload: unknown; cancelRequested: boolean };
@@ -131,6 +133,14 @@ export async function processJob(job: JobRow) {
     else if (job.type === "sheets.full") await runSheetFull(job.tenantId);
     else if (job.type === "hunt.proposal") await generateProposal(String(data.outreachId), job.tenantId);
     else if (job.type === "project.webhook") await deliverWebhook(String(data.projectId), String(data.event), job.tenantId);
+    else if (job.type === "telegram.search") {
+      // S2: поиск каналов идёт короткими шагами, чтобы не занимать обработчик задач минутами.
+      const step = await runTelegramSearchStep(String(data.searchId), job.tenantId);
+      if (!step.done) {
+        await reschedule(job.id, step.delayMs ?? 500);
+        return;
+      }
+    }
     else throw new FatalJobError(`Неизвестный тип задачи ${job.type}`);
     await finishJob(job.id, { ok: true });
     logEvent("job.done", { ...base, ms: Date.now() - started });

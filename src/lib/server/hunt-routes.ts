@@ -39,6 +39,7 @@ import { insights } from "../services/insights";
 import { aiStatus, aiUpdateSchema, updateAi } from "../services/ai-settings";
 import { demoEditSchema, demoStartSchema, editDemo, getDemo, previewDemo, publishDemo, rebuildDemo, startDemo } from "../services/hunt-demo";
 import { pipeline, pipelineQuerySchema } from "../services/pipeline";
+import { startTelegramSearch, telegramSearches, telegramSearchSchema, telegramSearchStatus } from "../services/telegram-source";
 import { alertStatus, confirmBinding, startBinding, testAlert, unbindTelegram } from "../services/alerts";
 import { finishTask, funnel, plan, recordReply, recordTouch, replySchema, touchSchema, undoTouch } from "../services/lead-cycle";
 import { PRESETS } from "../domain/segments";
@@ -127,6 +128,23 @@ export async function huntRoutes(request: Request, session: AppSession, path: st
   if (section === "ai" && id === "update" && method === "POST") {
     allow(session, "integrations.manage");
     return json(await updateAi(tenantId, session.userId, aiUpdateSchema.parse(await readJson(request))));
+  }
+  // S2: поиск Telegram-каналов организаций (только чтение). Стоит до настроек Telegram-оповещений.
+  if (section === "telegram" && id === "searches") {
+    const searchId = action;
+    if (!searchId && method === "POST") {
+      allow(session, "search.manage");
+      return json(await startTelegramSearch(tenantId, session.userId, telegramSearchSchema.parse(await readJson(request))), 202);
+    }
+    if (!searchId && method === "GET") {
+      allow(session, "org.read");
+      return json(await telegramSearches(tenantId, int(url.searchParams.get("limit"), 10, 1, 50)));
+    }
+    if (searchId && method === "GET") {
+      allow(session, "org.read");
+      return json(await telegramSearchStatus(tenantId, searchId));
+    }
+    throw new ApiError(404, "Действие с поиском Telegram не найдено", "not_found");
   }
   if (section === "telegram") {
     allow(session, "integrations.manage");

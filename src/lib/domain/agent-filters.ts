@@ -15,7 +15,9 @@ export function samePlace(left: string | null | undefined, right: string) {
 export function contactKinds(type: string, value: string): ContactKind[] {
   const kinds = new Set<ContactKind>();
   const text = value.toLowerCase();
-  if (type === "email" || text.includes("@")) kinds.add("email");
+  // «@username» с типом telegram — ник Telegram, а не почта.
+  if (type === "email" || (type !== "telegram" && /[^\s@]+@[^\s@]+\.[a-z]{2,}/.test(text))) kinds.add("email");
+  if (type === "telegram") kinds.add("telegram");
   if (type === "phone") kinds.add("phone");
   if (/t\.me|telegram/.test(text)) kinds.add("telegram");
   if (/vk\.com|vk\.me|vkontakte/.test(text)) kinds.add("vk");

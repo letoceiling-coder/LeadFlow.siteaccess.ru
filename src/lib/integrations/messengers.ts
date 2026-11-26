@@ -28,6 +28,19 @@ export type TgMessage = {
   link?: string | null;
   media?: { type: string } | null;
 };
+export type TgChannelInfo = {
+  chat: TgPeer;
+  about?: string | null;
+  members?: number | null;
+  posts?: number | null;
+  lastPostId?: number | null;
+  pinnedMessageId?: number | null;
+  discussionChatId?: string | null;
+  commentsEnabled?: boolean;
+  joined?: boolean;
+  createdAt?: string | null;
+  link?: string | null;
+};
 export type TgHistory = { chat: TgPeer; total?: number; messages: TgMessage[] };
 
 const TG_MIN_INTERVAL_MS = Number(process.env.TG_MIN_INTERVAL_MS || 1200);
@@ -82,6 +95,11 @@ export class MessengerReader {
   async resolve(to: string): Promise<TgPeer> {
     const body = await this.get<{ peer: TgPeer }>("/api/v1/telegram/resolve", { to });
     return body.peer;
+  }
+
+  /** Описание открытого канала (без вступления): about, подписчики, число постов, закреп, дата создания. */
+  channelInfo(channel: string) {
+    return this.get<TgChannelInfo>("/api/v1/telegram/channels/info", { channel });
   }
 
   /** Последние посты открытого канала (без вступления). */

@@ -12,6 +12,14 @@ import { activity, assertAssignee, ensureLead, getSettings, moveLead } from "./c
 const SORTS = ["name", "city", "rating", "reviewCount", "createdAt", "updatedAt", "leadScore"] as const;
 type OrgSort = (typeof SORTS)[number];
 
+/** Повторный сбор с карт не должен стирать досье Telegram-канала, привязанное к карточке (дедупликация S2). */
+function rawKeepingTelegram(previous: Prisma.JsonValue | null | undefined, next: unknown) {
+  const old = previous && typeof previous === "object" && !Array.isArray(previous) ? (previous as Record<string, unknown>) : null;
+  const fresh = next && typeof next === "object" && !Array.isArray(next) ? (next as Record<string, unknown>) : null;
+  if (old?.telegram && !(fresh && "telegram" in fresh)) return { ...(fresh ?? {}), telegram: old.telegram } as Prisma.InputJsonValue;
+  return next == null ? Prisma.JsonNull : (next as Prisma.InputJsonValue);
+}
+
 export async function upsertMapped(tenantId: string, mapped: MappedOrganization) {
   const externalId = mapped.externalId || fallbackExternalId(mapped.name, mapped.city, mapped.address);
   const where = { tenantId_source_externalId: { tenantId, source: mapped.source || "yandex", externalId } };
@@ -36,7 +44,7 @@ export async function upsertMapped(tenantId: string, mapped: MappedOrganization)
     hours: mapped.hours == null ? Prisma.JsonNull : (mapped.hours as Prisma.InputJsonValue),
     description: mapped.description,
     legalName: mapped.legalName,
-    raw: mapped.raw == null ? Prisma.JsonNull : (mapped.raw as Prisma.InputJsonValue),
+    raw: rawKeepingTelegram(existing?.raw, mapped.raw),
     parserUpdatedAt: mapped.parserUpdatedAt ? new Date(mapped.parserUpdatedAt) : new Date(),
     firstSeenAt: existing?.firstSeenAt ?? (mapped.firstSeenAt ? new Date(mapped.firstSeenAt) : new Date()),
   };
