@@ -310,20 +310,13 @@ export function ItemPanel({ id }: { id: string | null }) {
   const placeholder = hasPlaceholder(text);
   const cannotSend = banned.length > 0 || !text.trim() || placeholder || Boolean(data && !data.targets.length && !channel);
   const sendButton = data ? (
-    <Button variant="accent" size="lg" className="w-full px-3" pending={busy} disabled={cannotSend} onClick={sendTouch}>
-      <Send className="h-5 w-5 max-[359px]:hidden" /> {data.targets.length ? "Скопировать и открыть чат" : "Скопировать и отметить"}
+    <Button variant="accent" size="lg" className="w-full min-w-0 px-2 text-[15px]" pending={busy} disabled={cannotSend} onClick={sendTouch}>
+      <Send className="h-5 w-5 shrink-0 max-[339px]:hidden" /> <span className="truncate">{data.targets.length ? "Скопировать и открыть чат" : "Скопировать и отметить"}</span>
     </Button>
   ) : null;
 
-  const footer = data && composing && !touched ? (
-    firstContact && !rejecting ? (
-      <div className="grid grid-cols-[48px_48px_minmax(0,1fr)] gap-2 sm:grid-cols-[56px_56px_minmax(0,1fr)]">
-        <Button variant="danger" size="lg" className="px-0" aria-label="Отклонить" onClick={() => setRejecting(true)}><X className="h-6 w-6" /></Button>
-        <Button variant="glass" size="lg" className="px-0" aria-label="Отложить на 3 дня" pending={busy} onClick={() => decide("snooze")}><Clock className="h-5 w-5" /></Button>
-        {sendButton}
-      </div>
-    ) : followUpMode ? sendButton : null
-  ) : null;
+  // Футер — одна большая кнопка на всю ширину: на 375 px подпись помещается целиком.
+  const footer = data && composing && !touched && !rejecting ? sendButton : null;
 
   return (
     <Sheet
@@ -351,6 +344,13 @@ export function ItemPanel({ id }: { id: string | null }) {
           ) : null}
 
           {data.dossier ? <DossierCard dossier={data.dossier} presetLabel={data.presetLabel} /> : hook ? <div className="tint-orange rounded-2xl border px-4 py-3 text-[15px] leading-6">«{hook}»</div> : null}
+
+          {composing && !touched && firstContact && !rejecting ? (
+            <div className="flex gap-2">
+              <Button size="sm" variant="danger" onClick={() => setRejecting(true)}><X className="h-4 w-4" /> Не подходит</Button>
+              <Button size="sm" pending={busy} onClick={() => decide("snooze")}><Clock className="h-4 w-4" /> Отложить на 3 дня</Button>
+            </div>
+          ) : null}
 
           {composing && !touched ? (
             <section className="space-y-3">
@@ -395,6 +395,10 @@ export function ItemPanel({ id }: { id: string | null }) {
                 </div>
               )}
             </section>
+          ) : null}
+
+          {["sent", "sleeping", "replied", "demo", "call", "estimate", "lost", "won"].includes(data.status) || data.tasks.length || data.touches.length ? (
+            <ReplyBox itemId={data.id} replies={data.replies} tasks={data.tasks} touches={data.touches} targets={data.targets} canReply={["sent", "sleeping", "replied", "demo", "call", "estimate", "lost"].includes(data.status) && !data.blocked} onChanged={refresh} />
           ) : null}
 
           {data.card ? (
@@ -488,10 +492,6 @@ export function ItemPanel({ id }: { id: string | null }) {
                 </>
               )}
             </section>
-          ) : null}
-
-          {["sent", "sleeping", "replied", "demo", "call", "estimate", "lost", "won"].includes(data.status) || data.tasks.length || data.touches.length ? (
-            <ReplyBox itemId={data.id} replies={data.replies} tasks={data.tasks} touches={data.touches} targets={data.targets} canReply={["sent", "sleeping", "replied", "demo", "call", "estimate", "lost"].includes(data.status) && !data.blocked} onChanged={refresh} />
           ) : null}
 
           {NEXT[data.status] ? (

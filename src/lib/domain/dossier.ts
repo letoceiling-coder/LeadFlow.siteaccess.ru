@@ -130,7 +130,7 @@ export type ChatTarget = { channel: "telegram" | "max"; label: string; href: str
 export function chatTargets(channels: Channel[]): ChatTarget[] {
   const out: ChatTarget[] = [];
   for (const item of channels.filter((c) => c.kind === "telegram" && c.direct)) out.push({ channel: "telegram", label: `Telegram @${item.value}`, href: `https://t.me/${item.value}`, hint: null });
-  for (const item of channels.filter((c) => c.kind === "max")) out.push({ channel: "max", label: "MAX", href: item.value, hint: null });
+  for (const item of channels.filter((c) => c.kind === "max")) out.push({ channel: "max", label: "MAX по ссылке", href: item.value, hint: null });
   for (const item of channels.filter((c) => c.kind === "phone" && c.direct)) {
     out.push({ channel: "telegram", label: `Telegram по номеру ${item.value}`, href: `https://t.me/+${digitsOf(item.value)}`, hint: "Если номер скрыт в Telegram, чат не откроется — попробуйте MAX." });
     out.push({ channel: "max", label: `MAX ${item.value}`, href: null, hint: "Текст скопирован. Откройте MAX, найдите контакт по номеру и вставьте." });

@@ -271,7 +271,7 @@ export async function funnel(tenantId: string, days?: number) {
   // Итог дня: сегодняшние первые касания по сегментам и вариантам, ответы, задачи.
   const [touchesToday, repliesToday, tasksDoneToday, openTasks] = await Promise.all([
     prisma.touch.findMany({ where: { tenantId, sentAt: { gte: start } }, select: { kind: true, variant: true, outreach: { select: { preset: true, segment: true, organization: { select: { name: true, category: true, categories: true } } } } } }),
-    prisma.leadReply.findMany({ where: { tenantId, createdAt: { gte: start } }, select: { type: true } }),
+    prisma.leadReply.findMany({ where: { tenantId, createdAt: { gte: start } }, select: { type: true, outreachId: true } }),
     prisma.leadTask.count({ where: { tenantId, status: "done", doneAt: { gte: start } } }),
     prisma.leadTask.count({ where: { tenantId, status: "open" } }),
   ]);
@@ -286,8 +286,9 @@ export async function funnel(tenantId: string, days?: number) {
   const day = {
     sent: first.length,
     followUps: touchesToday.length - first.length,
-    replies: repliesToday.length,
-    interest: repliesToday.filter((item) => item.type === "interested" || item.type === "price").length,
+    // Ответы и интерес — по лидам: два сообщения от одного клиента — один ответ.
+    replies: new Set(repliesToday.map((item) => item.outreachId)).size,
+    interest: new Set(repliesToday.filter((item) => item.type === "interested" || item.type === "price").map((item) => item.outreachId)).size,
     tasksDone: tasksDoneToday,
     openTasks,
     bySegmentVariant: [...groups.entries()].map(([label, count]) => ({ label, count })),
