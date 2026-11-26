@@ -40,6 +40,7 @@ import { aiStatus, aiUpdateSchema, updateAi } from "../services/ai-settings";
 import { demoEditSchema, demoStartSchema, editDemo, getDemo, previewDemo, publishDemo, rebuildDemo, startDemo } from "../services/hunt-demo";
 import { pipeline, pipelineQuerySchema } from "../services/pipeline";
 import { startTelegramSearch, telegramSearches, telegramSearchSchema, telegramSearchStatus } from "../services/telegram-source";
+import { removeFromQueue, searchQueue } from "../services/parser";
 import { alertStatus, confirmBinding, startBinding, testAlert, unbindTelegram } from "../services/alerts";
 import { finishTask, funnel, plan, recordReply, recordTouch, replySchema, touchSchema, undoTouch } from "../services/lead-cycle";
 import { PRESETS } from "../domain/segments";
@@ -123,6 +124,15 @@ export async function huntRoutes(request: Request, session: AppSession, path: st
   if (section === "searches" && id && method === "DELETE") {
     allow(session, "search.manage");
     return json(await deleteSearch(tenantId, id));
+  }
+  // S4: очередь поисков — карты по одному сбору за раз, остальные ждут; удаление убирает и из очереди, и из истории.
+  if (section === "queue" && !id && method === "GET") {
+    allow(session, "org.read");
+    return json(await searchQueue(tenantId, int(url.searchParams.get("limit"), 20, 1, 100)));
+  }
+  if (section === "queue" && id && method === "DELETE") {
+    allow(session, "search.manage");
+    return json(await removeFromQueue(tenantId, id, session.userId));
   }
   if (section === "ai" && !id && method === "GET") {
     allow(session, "integrations.manage");

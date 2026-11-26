@@ -28,6 +28,8 @@ export const searchSchema = z.object({
   outputFormat: z.enum(["json", "csv"]).optional().default("json"),
   force: z.boolean().optional().default(false),
   confirmLarge: z.boolean().optional().default(false),
+  /** S4: источники поиска. «sites» — открывать сайты найденных при оценке; «telegram» запускается отдельно. */
+  sources: z.array(z.enum(["maps", "sites", "telegram"])).max(3).optional(),
 });
 
 export const batchSearchSchema = searchSchema.omit({ city: true }).extend({

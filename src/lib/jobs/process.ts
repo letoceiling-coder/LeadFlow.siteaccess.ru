@@ -4,7 +4,7 @@ import { ApiError, FatalJobError, RetryableError } from "../errors";
 import { enqueueJob, finishJob, failJob, reschedule } from "./queue";
 import { logEvent } from "../log";
 import { sendAlert } from "../services/alerts";
-import { refreshParserTask, runSync, submitParserTask } from "../services/parser";
+import { kickSearchQueue, refreshParserTask, runSync, submitParserTask, tickSearchQueue } from "../services/parser";
 import { runAnalysis } from "../services/analysis";
 import { advanceSite, pullParserAudit, refreshPublish } from "../services/sites";
 import { sendNextRecipient } from "../services/campaigns";
@@ -20,6 +20,7 @@ import { runRadarPoll } from "../services/radar";
 const JOB_LABEL: Record<string, string> = {
   "parser.submit": "запуск поиска в парсере",
   "parser.poll": "сбор результатов парсера",
+  "parser.queue": "очередь поисков",
   "parser.sync": "синхронизация с парсером",
   "analysis.run": "AI-анализ",
   "site.generate": "генерация сайта",
@@ -54,18 +55,25 @@ export async function processJob(job: JobRow) {
   try {
     if (job.type === "parser.submit") {
       try {
-        const pending = await prisma.parserTask.findUnique({ where: { id: String(data.parserTaskId) }, select: { status: true } });
+        const pending = await prisma.parserTask.findUnique({ where: { id: String(data.parserTaskId) }, select: { status: true, type: true, dispatchedAt: true, externalId: true, tenantId: true } });
         // Поиск отменили, пока он ждал очереди парсера, — не запускаем платный сбор.
         if (!pending || ["cancelled", "failed"].includes(pending.status)) {
           await finishJob(job.id, { skipped: pending?.status ?? "missing" });
+          return;
+        }
+        // S4: сбор, который ещё ждёт очереди LeadFlow, отправляет только очередь — иначе два сбора разом и 429.
+        if (pending.type === "organizations.collect" && !pending.dispatchedAt && !pending.externalId) {
+          await kickSearchQueue(pending.tenantId);
+          await finishJob(job.id, { queued: true });
           return;
         }
         const submitted = await submitParserTask(String(data.parserTaskId));
         // Отложенный запуск тоже должен опрашивать результат — иначе поиск навсегда остаётся «в очереди».
         await enqueueJob({ tenantId: submitted.tenantId, type: "parser.poll", payload: { parserTaskId: submitted.id }, idempotencyKey: `poll:${submitted.id}` });
       } catch (error) {
-        const task = await prisma.parserTask.findUnique({ where: { id: String(data.parserTaskId) }, select: { createdAt: true } });
-        const tooOld = task && Date.now() - task.createdAt.getTime() > 3 * 60 * 60 * 1000;
+        const task = await prisma.parserTask.findUnique({ where: { id: String(data.parserTaskId) }, select: { createdAt: true, dispatchedAt: true } });
+        // Время ожидания в очереди LeadFlow не считаем — отсчёт с момента, когда сбор отдан парсеру.
+        const tooOld = task && Date.now() - (task.dispatchedAt ?? task.createdAt).getTime() > 3 * 60 * 60 * 1000;
         if (error instanceof RetryableError && !tooOld) {
           // Парсер просит подождать (429) или недоступен — ждём, попытки не тратим: поиск не должен умереть из-за очереди.
           await reschedule(job.id, Math.max(30_000, error.delayMs));
@@ -74,6 +82,7 @@ export async function processJob(job: JobRow) {
         }
         const reason = tooOld ? "Парсер не принял задачу за 3 часа — запустите поиск снова" : error instanceof Error ? error.message : "Парсер не принял задачу";
         await prisma.parserTask.updateMany({ where: { id: String(data.parserTaskId), status: "queued" }, data: { status: "failed", error: reason.slice(0, 300) } });
+        await kickSearchQueue(job.tenantId);
         throw error instanceof RetryableError ? new FatalJobError(reason) : error;
       }
     }
@@ -81,10 +90,11 @@ export async function processJob(job: JobRow) {
       const existing = await prisma.parserTask.findUnique({ where: { id: String(data.parserTaskId) } });
       if (!existing) throw new FatalJobError("Задача поиска не найдена");
       // Поиск не должен навсегда остаться «идёт»: сбор дольше 6 часов или окончательная ошибка → «failed» с причиной.
-      const tooLong = Date.now() - existing.createdAt.getTime() > 6 * 60 * 60 * 1000;
+      const tooLong = Date.now() - (existing.dispatchedAt ?? existing.createdAt).getTime() > 6 * 60 * 60 * 1000;
       if (tooLong && !["completed", "failed", "cancelled"].includes(existing.status)) {
         await prisma.parserTask.update({ where: { id: existing.id }, data: { status: "failed", error: "Сбор не завершился за 6 часов — запустите поиск снова." } });
         logEvent("parser.task_timeout", { ...base, task: existing.id }, "warn");
+        await kickSearchQueue(existing.tenantId);
         throw new FatalJobError("Сбор не завершился за 6 часов");
       }
       try {
@@ -97,13 +107,20 @@ export async function processJob(job: JobRow) {
           const reason = error instanceof ApiError ? error.message : "Не удалось получить результаты сбора";
           await prisma.parserTask.update({ where: { id: existing.id }, data: { status: "failed", error: `${reason}. Запустите поиск снова.`.slice(0, 300) } });
           logEvent("parser.task_failed", { ...base, task: existing.id, error: reason }, "error");
+          await kickSearchQueue(existing.tenantId);
         }
         throw error;
       }
       const fresh = await prisma.parserTask.findUnique({ where: { id: existing.id } });
+      // Сбор закончился (или ушёл на повтор и снова занял место) — очередь сама решит, отдавать ли следующего.
+      if (fresh && fresh.type === "organizations.collect" && !["queued", "running"].includes(fresh.status)) await kickSearchQueue(fresh.tenantId);
       // Массовый сбор идёт минутами (паузы против капчи) — опрашиваем реже.
       if (fresh && !["completed", "failed", "cancelled"].includes(fresh.status)) throw new RetryableError("Поиск ещё выполняется.", fresh.type === "organizations.collect" ? 15000 : 5000);
       if (fresh?.status === "completed" && !fresh.syncedAt) throw new RetryableError("Результаты ещё сохраняются.", 4000);
+    }
+    else if (job.type === "parser.queue") {
+      const tick = await tickSearchQueue(String(data.parserTaskId));
+      if (!tick.done) throw new RetryableError("Поиск ждёт очереди парсера.", 20_000);
     }
     else if (job.type === "parser.sync") await runSync(String(data.syncRunId));
     else if (job.type === "analysis.run") await runAnalysis(String(data.reportId));
@@ -121,7 +138,7 @@ export async function processJob(job: JobRow) {
     else if (job.type === "agent.turn") await runAgentTurn(String(data.threadId));
     else if (job.type === "hunt.qualify") {
       try {
-        await runQualify(String(data.organizationId), job.tenantId);
+        await runQualify(String(data.organizationId), job.tenantId, data.siteScan === false ? { siteScan: false } : {});
       } catch (error) {
         // Карточка не должна навсегда остаться «в очереди»: помечаем сбой, если повторов больше не будет.
         const current = await prisma.job.findUnique({ where: { id: job.id }, select: { attempts: true, maxAttempts: true } });
@@ -158,7 +175,7 @@ export async function processJob(job: JobRow) {
     const message = error instanceof Error ? error.message : String(error);
     const code = error instanceof ApiError ? error.code : error instanceof RetryableError ? "retry" : error instanceof FatalJobError ? "fatal" : "error";
     // «Поиск ещё идёт» — штатное ожидание, а не сбой: в журнал не пишем.
-    const routine = error instanceof RetryableError && !error.consumeAttempt && job.type === "parser.poll";
+    const routine = error instanceof RetryableError && !error.consumeAttempt && ["parser.poll", "parser.queue"].includes(job.type);
     if (!routine) logEvent("job.failed", { ...base, ms: Date.now() - started, code, error: message.slice(0, 300) }, error instanceof RetryableError ? "warn" : "error");
     if (!(error instanceof RetryableError)) {
       // Окончательный сбой задачи — в Telegram, привязанный к этому пространству.
