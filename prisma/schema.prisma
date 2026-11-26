@@ -926,6 +926,15 @@ model Outreach {
   qualifiedAt    DateTime?
   sheetSyncedAt  DateTime?
   project        Project?
+  /// Бриф 27.11: пресет сегмента А/Б/В/Г, оценка A/B/C по правилу гайда, досье, два черновика и отправленный вариант.
+  preset         String?
+  grade          String?
+  dossier        Json?
+  drafts         Json?
+  variant        String?
+  touches        Touch[]
+  replies        LeadReply[]
+  tasks          LeadTask[]
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -964,4 +973,56 @@ model Project {
 
   @@index([tenantId, stage, updatedAt])
   @@index([tenantId, createdAt])
+}
+
+/// S1 «Цикл лида»: каждое касание, отправленное человеком вручную (день 1, 4, 8). Текст — ровно тот, что скопировали.
+model Touch {
+  id             String   @id @default(cuid())
+  tenantId       String
+  outreachId     String
+  outreach       Outreach @relation(fields: [outreachId], references: [id], onDelete: Cascade)
+  organizationId String
+  kind           String
+  channel        String
+  variant        String?
+  text           String   @db.Text
+  actorId        String?
+  sentAt         DateTime @default(now())
+
+  @@index([tenantId, sentAt])
+  @@index([outreachId, sentAt])
+}
+
+/// Ответ клиента: дословная цитата, тип (интересно / цена / есть сайт / не сейчас / отказ) и подсказка следующего шага.
+model LeadReply {
+  id         String   @id @default(cuid())
+  tenantId   String
+  outreachId String
+  outreach   Outreach @relation(fields: [outreachId], references: [id], onDelete: Cascade)
+  quote      String   @db.Text
+  type       String
+  method     String   @default("rules")
+  next       Json?
+  actorId    String?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([outreachId, createdAt])
+}
+
+/// Задача после интереса: «фрагмент 15 сек» (А/Б) или «демо-сайт» (В).
+model LeadTask {
+  id         String    @id @default(cuid())
+  tenantId   String
+  outreachId String
+  outreach   Outreach  @relation(fields: [outreachId], references: [id], onDelete: Cascade)
+  kind       String
+  title      String
+  status     String    @default("open")
+  dueAt      DateTime?
+  doneAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([tenantId, status, dueAt])
+  @@index([outreachId])
 }

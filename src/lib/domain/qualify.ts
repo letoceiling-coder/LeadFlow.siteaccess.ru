@@ -23,6 +23,9 @@ export const qualifyResultSchema = z.object({
   avgCheckRub: z.number().positive().max(10_000_000).nullable().optional(),
   lostPerMonth: z.number().positive().max(10_000).nullable().optional(),
   features: z.array(z.string().trim().min(2).max(120)).max(5).optional().default([]),
+  /** Бриф 27.11: зацепка 15–20 слов или NOT_FOUND, тема для шаблона А/Б. */
+  hook: z.string().trim().max(400).nullable().optional(),
+  topic: z.string().trim().max(80).nullable().optional(),
 });
 
 export type QualifyResult = z.infer<typeof qualifyResultSchema>;
@@ -51,6 +54,8 @@ export type QualifyFacts = {
   reviews?: string[];
   /** Сколько точек с тем же названием в этом городе (своя сеть, не федеральная). */
   branches?: number | null;
+  /** Последние посты открытого Telegram-канала организации (raw.telegram.posts). */
+  posts?: { text: string; link: string | null; date: string }[];
 };
 
 export type CardFact = { text: string; source: string; kind: "fact" | "assumption" };
@@ -98,7 +103,7 @@ export function allowedSources(facts: QualifyFacts): Set<string> {
 const SOURCES = {
   money: new Set(["reviewCount", "rating", "services", "description", "features", "photoCount", "reviews"]),
   chaos: new Set(["websiteStatus", "website", "socials", "phones", "emails", "description", "features", "site", "reviews"]),
-  growth: new Set(["description", "features", "services", "reviewCount"]),
+  growth: new Set(["description", "features", "services", "reviewCount", "posts"]),
 } as const;
 
 function hasOwnSite(facts: QualifyFacts) {
@@ -336,7 +341,7 @@ export function priorityOf(score: number, ready: boolean): Priority {
   return "D";
 }
 
-export function buildQualifyPrompt(facts: QualifyFacts) {
+export function buildQualifyPrompt(facts: QualifyFacts, benefit?: string | null) {
   const sources = [...allowedSources(facts)].join(", ");
   const system = [
     "Ты квалифицируешь бизнес для студии, которая делает сайты, каталоги, онлайн-запись и кабинеты. Отвечай только JSON без markdown.",
@@ -351,7 +356,9 @@ export function buildQualifyPrompt(facts: QualifyFacts) {
     "avgCheckRub и lostPerMonth — твоя осторожная оценка среднего чека в рублях и числа потерянных заявок в месяц для этой ниши, или null.",
     "repeatable — повторяемый ли процесс (бронь, заказы, каталог) true/false/null. microBusiness, irrelevant, goodSiteAlready — true/false.",
     "features — 3 фишки решения под эту нишу (например: корзина и оплата, онлайн-запись, прайс с ценами).",
-    "Поля JSON: segment, observation, money{facts}, chaos{facts}, growth{facts}, repeatable, microBusiness, irrelevant, goodSiteAlready, avgCheckRub, lostPerMonth, features.",
+    `hook — зацепка: найди в постах (posts), на сайте (site) или в описании один проверяемый факт, связанный с ${benefit || "тем, как клиенты связываются с компанией"}, и напиши одно предложение на 15–20 слов. Нет факта — ответь NOT_FOUND и ничего не выдумывай.`,
+    "topic — тема, про которую компания рассказывает в постах или описании, 2–6 слов в винительном падеже после «про» (пример: «реабилитацию детей после ДТП»), или null.",
+    "Поля JSON: segment, observation, money{facts}, chaos{facts}, growth{facts}, repeatable, microBusiness, irrelevant, goodSiteAlready, avgCheckRub, lostPerMonth, features, hook, topic.",
   ].join(" ");
   const user = JSON.stringify({ instruction: "Разбери только эти поля.", facts });
   return { system, user };

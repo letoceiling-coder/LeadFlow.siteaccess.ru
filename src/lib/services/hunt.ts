@@ -24,8 +24,11 @@ import {
   type QualifyResult,
   type StrategyFactor,
 } from "../domain/qualify";
-import { FOLLOW_UP_DAYS, bannedIn, buildPitch, contactLinks, followUpText, nextFollowUpAt } from "../domain/pitch";
-import { detectSegment, segmentInfo } from "../domain/segments";
+import { FOLLOW_UP_DAYS, bannedIn, buildPitch, contactLinks, nextFollowUpAt } from "../domain/pitch";
+import { detectPreset, detectSegment, presetInfo, segmentInfo, type PresetId } from "../domain/segments";
+import { NOT_FOUND, chatTargets, channelsOf, postFacts, type Dossier } from "../domain/dossier";
+import { followUpDraft, hasPlaceholder, touchKind, type Drafts } from "../domain/drafts";
+import { assembleLead, presetLabel } from "../domain/lead-cycle";
 import { dayBounds } from "../domain/time";
 import { queueSheet } from "./sheets";
 import { scanSite, storedScan } from "./site-scan";
@@ -37,7 +40,7 @@ import { logEvent } from "../log";
 const OPEN = ["new", "snoozed", "approved", "rejected"];
 const DAY = 24 * 60 * 60 * 1000;
 /** Живой диалог: после ответа у каждого шага есть срок (§3: созвон в течение суток, смета +24ч). */
-const LIVE = ["replied", "demo", "call", "estimate"];
+export const LIVE = ["replied", "demo", "call", "estimate"];
 const NEXT_STEP_HOURS: Record<string, number> = { replied: 24, demo: 48, call: 24, estimate: 72 };
 
 /* ───────────── Квалификация ───────────── */
@@ -64,7 +67,9 @@ function factsOf(org: OrgWithContacts): QualifyFacts {
     reviews: reviewTexts(org.raw),
     phones: org.contacts.filter((item) => item.type === "phone").map((item) => item.value),
     emails: org.contacts.filter((item) => item.type === "email").map((item) => item.value),
-    socials: org.contacts.filter((item) => item.type === "social").map((item) => item.value),
+    // Telegram и MAX — тоже контакты: каналы организаций из Telegram (S2) приходят с типом «telegram».
+    socials: org.contacts.filter((item) => ["social", "telegram", "max", "whatsapp", "vk"].includes(item.type)).map((item) => (item.type === "telegram" && item.value.startsWith("@") ? `https://t.me/${item.value.slice(1)}` : item.value)),
+    posts: postFacts(org.raw),
   };
 }
 
@@ -191,7 +196,8 @@ export async function runQualify(organizationId: string, jobTenantId?: string) {
     const integration = await requireReady(tenantId, "openrouter", "Квалификация");
     await assertBudget(tenantId, settings.ai.maxCostPerAnalysisUsd);
     model = resolveTaskModel("analysis", settings.ai.qualifyModel || process.env.AI_DEFAULT_MODEL);
-    const prompt = buildQualifyPrompt(facts);
+    const preset = presetInfo(detectPreset({ segment: detectSegment(fresh.category, fresh.categories), name: fresh.name, category: fresh.category, categories: fresh.categories, description: fresh.description }));
+    const prompt = buildQualifyPrompt(facts, preset?.benefit);
     try {
       const result = await completeJson({ baseUrl: String(integration.config.baseUrl), apiKey: integration.secrets.apiKey, secrets: integration.secrets, model, system: prompt.system, user: prompt.user, schema: qualifyResultSchema, maxTokens: 1200 });
       ai = result.data;
@@ -217,13 +223,21 @@ export async function runQualify(organizationId: string, jobTenantId?: string) {
   const latest = await prisma.outreach.findUnique({ where: { organizationId }, select: { card: true } });
   const card = keepManualFacts(latest?.card as unknown as ObservationCard | null, buildCard(facts, ai));
   const scored = strategyScore(card, ai);
+  // Бриф 27.11: досье, зацепка или NOT_FOUND, оценка A/B/C и два черновика.
+  const lead = assembleLead({ facts, card, ai, raw: fresh.raw, contacts: fresh.contacts, description: fresh.description });
+  // Писать можно по старому стоп-правилу (деньги + хаос + контакт) или по правилу брифа: есть зацепка и прямой канал.
+  const writable = scored.ready || (lead.dossier.hook !== NOT_FOUND && lead.dossier.channels.some((item) => item.direct) && lead.dossier.grade !== "C");
   const data = {
+    preset: lead.dossier.preset,
+    grade: lead.dossier.grade,
+    dossier: lead.dossier as unknown as Prisma.InputJsonValue,
+    drafts: lead.drafts as unknown as Prisma.InputJsonValue,
     segment: card.segment,
     score: scored.score,
     priority: scored.priority,
     factors: scored.factors as unknown as Prisma.InputJsonValue,
     card: { ...card, promptVersion: QUALIFY_PROMPT_VERSION } as unknown as Prisma.InputJsonValue,
-    cardStatus: scored.ready ? "ready" : "no_fact",
+    cardStatus: writable ? "ready" : "no_fact",
     model,
     costUsd: cost,
     error: aiNote,
@@ -243,13 +257,13 @@ export async function runQualify(organizationId: string, jobTenantId?: string) {
         method: QUALIFY_PROMPT_VERSION,
         factors: scored.factors as unknown as Prisma.InputJsonValue,
         weights: {},
-        explanation: `Приоритет ${scored.priority}. ${scored.ready ? "Карточка готова." : "Нет подтверждённого факта денег или хаоса — к отправке не допускается."}`,
+        explanation: `Приоритет ${scored.priority}, оценка ${lead.dossier.grade}. ${writable ? "Карточка готова." : "Нет подтверждённого факта и зацепки с прямым каналом — к отправке не допускается."}`,
       },
     });
     return row;
   });
   if (billed) await recordCost({ tenantId, provider: "openrouter", operation: "qualify", amountUsd: cost, organizationId, refType: "outreach", refId: saved.id });
-  if (scored.priority === "A" || scored.priority === "B") await queueSheet(tenantId, "outreach", saved.id);
+  if (scored.priority === "A" || scored.priority === "B" || lead.dossier.grade === "A") await queueSheet(tenantId, "outreach", saved.id);
 }
 
 export async function markQualifyFailed(organizationId: string, message: string) {
@@ -293,12 +307,12 @@ async function onePerChain<T extends { organization: { name: string; city: strin
 
 /* ───────────── Лента «Сегодня» ───────────── */
 
-async function bounds(tenantId: string) {
+export async function bounds(tenantId: string) {
   const settings = await getSettings(tenantId);
   return { ...dayBounds(settings.hunt.timezone), settings };
 }
 
-async function suppressedOrgIds(tenantId: string, rows: { organizationId: string; organization: { contacts?: { value: string }[] } }[]) {
+export async function suppressedOrgIds(tenantId: string, rows: { organizationId: string; organization: { contacts?: { value: string }[] } }[]) {
   if (!rows.length) return new Set<string>();
   const values = rows.flatMap((row) => [`org:${row.organizationId}`, ...(row.organization.contacts ?? []).map((item) => item.value.toLowerCase())]);
   const hits = await prisma.suppressionEntry.findMany({ where: { tenantId, value: { in: values } }, select: { value: true } });
@@ -316,7 +330,7 @@ const listInclude = {
 type OutreachRow = Prisma.OutreachGetPayload<{ include: typeof listInclude }>;
 
 /** Не показываем тех, кому писать нельзя: отказ, стоп-лист, стадия «Не связываться». */
-const contactableOrg = { optOut: null, NOT: { lead: { stage: { key: "do_not_contact" } } } } satisfies Prisma.OrganizationWhereInput;
+export const contactableOrg = { optOut: null, NOT: { lead: { stage: { key: "do_not_contact" } } } } satisfies Prisma.OrganizationWhereInput;
 
 export async function today(tenantId: string, limit = 20) {
   await sweepStuck(tenantId);
@@ -325,7 +339,7 @@ export async function today(tenantId: string, limit = 20) {
   const where: Prisma.OutreachWhereInput = {
     tenantId,
     cardStatus: "ready",
-    priority: { in: ["A", "B"] },
+    AND: [{ OR: [{ priority: { in: ["A", "B"] } }, { grade: { in: ["A", "B"] } }] }],
     OR: [{ status: "new" }, { status: "snoozed", snoozeUntil: { lte: now } }],
     organization: contactableOrg,
   };
@@ -338,7 +352,7 @@ export async function today(tenantId: string, limit = 20) {
     organization: contactableOrg,
   };
   const [rows, total, approved, followUps, queued, failed, sent, incomplete, reviewRows, reviewTotal] = await Promise.all([
-    prisma.outreach.findMany({ where, include: listInclude, orderBy: [{ priority: "asc" }, { score: "desc" }], take }),
+    prisma.outreach.findMany({ where, include: listInclude, orderBy: [{ grade: { sort: "asc", nulls: "last" } }, { priority: "asc" }, { score: "desc" }], take }),
     prisma.outreach.count({ where }),
     prisma.outreach.count({ where: { tenantId, status: "approved", organization: contactableOrg } }),
     prisma.outreach.count({ where: { tenantId, status: { in: [...LIVE, "sent"] }, nextFollowUpAt: { lte: end }, organization: contactableOrg } }),
@@ -399,12 +413,17 @@ function publicItem(row: OutreachRow, endOfToday: Date) {
     error: row.error,
     projectId: row.project?.id ?? null,
     updatedAt: row.updatedAt,
+    preset: row.preset,
+    presetLabel: presetLabel(row.preset),
+    grade: row.grade,
+    hook: (row.dossier as unknown as Dossier | null)?.hook ?? null,
+    variant: row.variant,
   };
 }
 
 const ownedInclude = { organization: { include: { contacts: true, optOut: true, lead: { include: { stage: true } } } }, project: { select: { id: true } } } as const;
 
-async function owned(tenantId: string, id: string) {
+export async function owned(tenantId: string, id: string) {
   const row = await prisma.outreach.findFirst({ where: { id, tenantId }, include: ownedInclude });
   if (!row) throw new ApiError(404, "Карточка не найдена", "not_found");
   return row;
@@ -418,7 +437,7 @@ async function contactBlock(row: Awaited<ReturnType<typeof owned>>): Promise<str
   return hit ? "Контакт в стоп-листе." : null;
 }
 
-async function assertContactable(row: Awaited<ReturnType<typeof owned>>) {
+export async function assertContactable(row: Awaited<ReturnType<typeof owned>>) {
   const reason = await contactBlock(row);
   if (reason) throw new ApiError(409, reason, "do_not_contact");
 }
@@ -467,7 +486,15 @@ export async function getItem(tenantId: string, id: string) {
   const card = row.card as unknown as ObservationCard | null;
   const draft = row.pitch || (card ? buildPitch(card) : "");
   const followUpDue = row.status === "sent" && Boolean(row.nextFollowUpAt && row.nextFollowUpAt <= end);
-  const followUp = row.status === "sent" ? followUpText(row.followUpStep + 1) : null;
+  const preset = (row.preset as PresetId | null) ?? detectPreset({ segment: row.segment, name: row.organization.name, category: row.organization.category, categories: row.organization.categories });
+  const followUp = row.status === "sent" && touchKind(row.followUpStep) ? followUpDraft(row.followUpStep, preset, row.organization.category, row.segment) : null;
+  const dossier = row.dossier as unknown as Dossier | null;
+  const channels = dossier?.channels ?? channelsOf(row.organization.contacts, row.organization.raw);
+  const [touches, replies, tasks] = await Promise.all([
+    prisma.touch.findMany({ where: { outreachId: row.id }, orderBy: { sentAt: "desc" }, take: 10 }),
+    prisma.leadReply.findMany({ where: { outreachId: row.id }, orderBy: { createdAt: "desc" }, take: 10 }),
+    prisma.leadTask.findMany({ where: { outreachId: row.id }, orderBy: { createdAt: "desc" }, take: 10 }),
+  ]);
   const blocked = await contactBlock(row);
   return {
     id: row.id,
@@ -511,6 +538,18 @@ export async function getItem(tenantId: string, id: string) {
     })() : null,
     projectId: row.project?.id ?? null,
     lastChannel: row.channel,
+    // Бриф 27.11: досье, оценка, два черновика, куда открыть чат, история касаний, ответов и задач.
+    preset,
+    presetLabel: presetLabel(preset),
+    grade: row.grade,
+    dossier,
+    drafts: (row.drafts as unknown as Drafts | null) ?? null,
+    variant: row.variant,
+    touchKind: row.status === "sent" ? touchKind(row.followUpStep) : null,
+    targets: chatTargets(channels),
+    touches: touches.map((item) => ({ id: item.id, kind: item.kind, channel: item.channel, variant: item.variant, text: item.text, sentAt: item.sentAt })),
+    replies: replies.map((item) => ({ id: item.id, type: item.type, quote: item.quote, method: item.method, next: item.next, createdAt: item.createdAt })),
+    tasks: tasks.map((item) => ({ id: item.id, kind: item.kind, title: item.title, status: item.status, dueAt: item.dueAt, doneAt: item.doneAt })),
   };
 }
 
@@ -569,6 +608,7 @@ export async function markSent(tenantId: string, actorId: string, role: string, 
   const text = (input.text ?? row.pitch ?? "").trim();
   const banned = bannedIn(text);
   if (banned.length) throw new ApiError(422, `Уберите фразы: ${banned.join(", ")}`, "banned_phrase");
+  if (hasPlaceholder(text)) throw new ApiError(422, "В тексте осталась заглушка в квадратных скобках — впишите факт.", "placeholder");
   if (input.force && !["OWNER", "ADMIN"].includes(role)) throw new ApiError(403, "Превысить дневной лимит может только владелец или администратор.", "forbidden");
   const { start, settings } = await bounds(tenantId);
   const sentAt = new Date();
@@ -744,13 +784,13 @@ export async function addFact(tenantId: string, actorId: string, id: string, inp
       factors: scored.factors as unknown as Prisma.InputJsonValue,
       score: scored.score,
       priority: scored.priority,
-      cardStatus: scored.ready ? "ready" : "no_fact",
+      cardStatus: scored.ready || row.cardStatus === "ready" ? "ready" : "no_fact",
     },
   });
   if (!updated.count) throw new ApiError(409, "Карточку уже изменили на другом устройстве.", "conflict");
   await activity({ tenantId, organizationId: row.organizationId, actorId, type: "outreach.fact", message: `Подтверждён факт (${input.kind === "money" ? "деньги" : "хаос"}): ${input.text}` });
   await queueSheet(tenantId, "outreach", id);
-  return { ok: true, score: scored.score, priority: scored.priority, ready: scored.ready };
+  return { ok: true, score: scored.score, priority: scored.priority, ready: scored.ready || row.cardStatus === "ready" };
 }
 
 /** Следующая карточка для работы: сначала взятые в работу, потом новые A/B. Чтобы после «Отправил» не возвращаться в список. */
@@ -766,7 +806,7 @@ export async function nextItem(tenantId: string, excludeId?: string | null) {
   };
   const approved = await pick({ ...base, status: "approved" });
   if (approved) return { id: approved.id, kind: "write" as const };
-  const fresh = await pick({ ...base, cardStatus: "ready", priority: { in: ["A", "B"] }, OR: [{ status: "new" }, { status: "snoozed", snoozeUntil: { lte: now } }] });
+  const fresh = await pick({ ...base, cardStatus: "ready", AND: [{ OR: [{ priority: { in: ["A", "B"] } }, { grade: { in: ["A", "B"] } }] }], OR: [{ status: "new" }, { status: "snoozed", snoozeUntil: { lte: now } }] });
   return fresh ? { id: fresh.id, kind: "review" as const } : null;
 }
 
