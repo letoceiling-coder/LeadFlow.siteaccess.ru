@@ -143,7 +143,8 @@ export async function deleteRadarProject(tenantId: string, actorId: string, id: 
     await disconnectBot(tenantId, actorId, id).catch(() => undefined);
   }
   await prisma.radarProject.delete({ where: { id } });
-  await prisma.job.updateMany({ where: { tenantId, idempotencyKey: `radar:${id}`, status: { in: ["queued", "running"] } }, data: { cancelRequested: true } });
+  // Ждущую задачу опроса отменяем; идущая сама завершится — проекта больше нет.
+  await prisma.job.updateMany({ where: { tenantId, idempotencyKey: `radar:${id}`, status: "queued" }, data: { status: "cancelled", finishedAt: new Date() } });
   await audit({ tenantId, actorId, action: "radar.project_delete", entityType: "radar", entityId: id });
   return { ok: true };
 }
