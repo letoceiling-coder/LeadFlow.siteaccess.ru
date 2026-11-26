@@ -1,15 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Check, Clock, Copy, PenLine, ExternalLink, FolderKanban, Mail, MessageCircle, Phone, Send, Sparkles, X } from "lucide-react";
-import { ApiClientError } from "@/lib/client";
-import { bannedIn, replyTemplates } from "@/lib/domain/pitch";
-import { scenarioOf } from "@/lib/domain/scenarios";
+import { ArrowRight, Clock, Copy, ExternalLink, FolderKanban, Mail, MessageCircle, Phone, Send, Sparkles, X } from "lucide-react";
+import { bannedIn } from "@/lib/domain/pitch";
+import { buildDrafts, hasPlaceholder, MAX_WORDS } from "@/lib/domain/drafts";
+import { wordCount } from "@/lib/domain/dossier";
+import { DossierCard } from "./item-dossier";
+import { ReplyBox } from "./item-reply";
+import { copyAndOpen, saveTouch } from "./chat-open";
 import { useHunt } from "./shell";
 import { post, useLive } from "./data";
 import { DemoSection } from "./demo-section";
-import { Button, Chip, Notice, PriorityBadge, Sheet, Skeleton, cx, errorText, textareaClass, useToast } from "./ui";
-import { SOURCE_LABEL, STATUS_LABEL, dayLabel, hookOf, type CardFact, type ObservationCard } from "./types";
+import { Button, Chip, Notice, PriorityBadge, Segmented, Sheet, Skeleton, cx, errorText, textareaClass, useToast } from "./ui";
+import { SOURCE_LABEL, STATUS_LABEL, dayLabel, hookOf, type CardFact, type ChatTarget, type Dossier, type ObservationCard, type ReplyNext } from "./types";
 
 type ContactLink = { kind: string; label: string; href: string; prefill: boolean };
 type Item = {
@@ -37,7 +40,20 @@ type Item = {
   lastChannel: string | null;
   site: { ok: boolean; error: string | null; viewport: boolean; booking: boolean; cart: boolean; prices: boolean; form: boolean; https: boolean; builder: string | null; copyrightYear: number | null; emails: string[]; links: { kind: string }[]; scannedAt: string } | null;
   proposal: { url: string; text: string; title: string; ai: boolean; createdAt: string } | null;
+  preset: string | null;
+  presetLabel: string | null;
+  grade: string | null;
+  dossier: Dossier | null;
+  drafts: { A: string; B: string } | null;
+  variant: string | null;
+  touchKind: "day4" | "day8" | null;
+  targets: ChatTarget[];
+  touches: { id: string; kind: string; channel: string; variant: string | null; text: string; sentAt: string }[];
+  replies: { id: string; type: string; quote: string; method: string; next: ReplyNext | null; createdAt: string }[];
+  tasks: { id: string; kind: string; title: string; status: string; dueAt: string | null; doneAt: string | null }[];
 };
+
+type Variant = "A" | "B";
 
 function SiteScanRow({ site }: { site: NonNullable<Item["site"]> }) {
   if (!site.ok) return <Notice tone="warn">Сайт не открылся при проверке{site.error ? `: ${site.error.slice(0, 80)}` : ""}.</Notice>;
@@ -137,12 +153,16 @@ export function ItemPanel({ id }: { id: string | null }) {
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [awaiting]);
-  useEffect(() => { setReturned(false); setAwaiting(false); }, [id]);
+  useEffect(() => { setReturned(false); setAwaiting(false); setTouched(null); }, [id]);
 
   const firstContact = data ? ["new", "approved", "snoozed"].includes(data.status) : false;
-  const writing = data?.status === "approved";
   const followUpMode = Boolean(data?.followUpDue);
-  const draftKey = data ? `lf-pitch-${data.id}` : "";
+  const [variant, setVariant] = useState<Variant>("A");
+  const [targetIndex, setTargetIndex] = useState(0);
+  const [touched, setTouched] = useState<{ touchId: string; label: string } | null>(null);
+  const draftKey = data ? `lf-pitch-${data.id}-${variant}` : "";
+  // Черновики A/B: из квалификации; у старых карточек — собираем на месте из крючка.
+  const drafts = useMemo(() => (data ? data.drafts ?? buildDrafts({ preset: data.preset as "А" | null, hook: data.dossier?.hook ?? data.card?.observation ?? null, topic: data.dossier?.topic, category: data.organization.category, segment: data.segment }) : null), [data]);
 
   // Текст заполняется один раз на карточку и режим — перезагрузка данных не стирает правки.
   useEffect(() => {
@@ -150,11 +170,44 @@ export function ItemPanel({ id }: { id: string | null }) {
     const key = `${data.id}:${followUpMode ? `f${data.followUpStep}` : "p"}`;
     if (initFor.current === key) return;
     initFor.current = key;
-    setText(followUpMode ? data.followUp ?? "" : readDraft(`lf-pitch-${data.id}`) ?? data.pitch);
+    const v: Variant = data.variant === "B" ? "B" : "A";
+    setVariant(v);
+    setText(followUpMode ? data.followUp ?? "" : readDraft(`lf-pitch-${data.id}-${v}`) ?? drafts?.[v] ?? data.pitch);
     setChannel(data.lastChannel ?? (data.links[0] ? KIND_TO_CHANNEL[data.links[0].kind] ?? null : null));
+    setTargetIndex(0);
     setRejecting(false);
     setError("");
-  }, [data, followUpMode]);
+  }, [data, followUpMode, drafts]);
+
+  function switchVariant(next: Variant) {
+    if (!data || next === variant) return;
+    writeDraft(`lf-pitch-${data.id}-${variant}`, text);
+    setVariant(next);
+    setText(readDraft(`lf-pitch-${data.id}-${next}`) ?? drafts?.[next] ?? data.pitch);
+  }
+
+  /** Одно нажатие: копирует текст, открывает Telegram или MAX и записывает касание (канал, вариант, текст, время). */
+  function sendTouch() {
+    if (!data) return;
+    const target = data.targets[targetIndex] ?? null;
+    const sendChannel = target?.channel ?? channel;
+    if (!sendChannel) { setError("Выберите, куда отправляете"); return; }
+    copyAndOpen(text, target);
+    if (target && !target.href && target.hint) toast({ text: target.hint });
+    setBusy(true);
+    setError("");
+    const kind = followUpMode ? "followup" : "first";
+    saveTouch(data.id, { kind, channel: sendChannel, variant: followUpMode ? null : variant, text }, user.role)
+      .then((result) => {
+        if (!followUpMode) { writeDraft(`lf-pitch-${data.id}-A`, null); writeDraft(`lf-pitch-${data.id}-B`, null); }
+        const label = `${followUpMode ? (data.touchKind === "day8" ? "день 8" : "день 4") : `вариант ${variant}`} · ${sendChannel === "max" ? "MAX" : sendChannel === "telegram" ? "Telegram" : CHANNELS.find((item) => item.key === sendChannel)?.label ?? sendChannel}`;
+        setTouched({ touchId: result.touchId, label });
+        toast({ text: result.silent ? "Касание дня 8 записано — дальше пауза, статус «Тишина»" : "Касание записано", action: { label: "Отменить", run: () => { void post(`/api/hunt/touches/${result.touchId}/undo`).then(() => { setTouched(null); initFor.current = ""; refresh(); }).catch((reason) => toast({ text: errorText(reason), tone: "error" })); } } });
+        refresh();
+      })
+      .catch((reason) => setError(errorText(reason)))
+      .finally(() => setBusy(false));
+  }
 
   useEffect(() => { if (!id) initFor.current = ""; }, [id]);
 
@@ -215,7 +268,7 @@ export function ItemPanel({ id }: { id: string | null }) {
   async function openLink(link: ContactLink) {
     try { await navigator.clipboard.writeText(text); } catch { /* буфер недоступен */ }
     setChannel(KIND_TO_CHANNEL[link.kind] ?? "other");
-    if (writing) writeDraft(draftKey, text);
+    if (firstContact) writeDraft(draftKey, text);
     toast({ text: link.prefill ? "Текст подставлен — отправьте и вернитесь" : "Текст в буфере — вставьте в чат и отправьте" });
     if (link.kind !== "phone") setAwaiting(true);
     window.open(link.href, "_blank", "noopener");
@@ -223,41 +276,11 @@ export function ItemPanel({ id }: { id: string | null }) {
 
   async function rewrite() {
     if (!data) return;
-    const result = await run(() => post<{ text: string; fallback: boolean }>(`/api/hunt/${data.id}/pitch/rewrite`));
+    const result = await run(() => post<{ text: string; fallback: boolean }>(`/api/hunt/${data.id}/pitch/rewrite`, { text, preset: data.preset }));
     if (!result) return;
     setText(result.text);
     writeDraft(draftKey, result.text);
-    toast({ text: result.fallback ? "AI написал запрещённую фразу — текст не изменён" : "AI переписал текст — проверьте" });
-  }
-
-  async function markSent() {
-    if (!data || !channel) return;
-    setBusy(true);
-    setError("");
-    try {
-      try {
-        await post(`/api/hunt/${data.id}/sent`, { channel, text });
-      } catch (reason) {
-        const canForce = ["OWNER", "ADMIN"].includes(user.role);
-        if (!(reason instanceof ApiClientError && reason.code === "daily_limit" && canForce && window.confirm(`${reason.message}\n\nВсё равно отметить?`))) throw reason;
-        await post(`/api/hunt/${data.id}/sent`, { channel, text, force: true });
-      }
-      writeDraft(draftKey, null);
-      refresh();
-      await goNext("Отмечено, напомню через 3 дня");
-    } catch (reason) {
-      setError(errorText(reason));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function followUp() {
-    if (!data || !channel) return;
-    const result = await run(() => post<{ next: string | null }>(`/api/hunt/${data.id}/followup`, { channel }));
-    if (!result) return;
-    refresh();
-    await goNext(result.next ? `Напоминание отмечено, следующее ${dayLabel(result.next)}` : "Три напоминания без ответа — в «спящих»");
+    toast({ text: result.fallback ? "AI нарушил правила (длина или запрещённая фраза) — текст не изменён" : "AI переписал текст — проверьте" });
   }
 
   async function buildProposal() {
@@ -282,25 +305,18 @@ export function ItemPanel({ id }: { id: string | null }) {
 
   const hook = data ? hookOf(data.card) : null;
   const canWrite = data && data.cardStatus === "ready" && !data.blocked;
-
-  const footer = data && canWrite ? (
-    writing || followUpMode ? (
-      <div className="space-y-3">
-        <div className="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5">
-          {CHANNELS.map((item) => <Chip key={item.key} active={channel === item.key} onClick={() => setChannel(item.key)}>{item.label}</Chip>)}
-        </div>
-        <Button variant="accent" size="lg" className="w-full" pending={busy} disabled={!channel || banned.length > 0 || !text.trim()} onClick={() => (followUpMode ? followUp() : markSent())}>
-          <Check className="h-5 w-5" /> {followUpMode ? "Напомнил" : "Отправил"}{channel ? ` · ${CHANNELS.find((item) => item.key === channel)?.label}` : ""}
-        </Button>
-      </div>
-    ) : firstContact && !rejecting ? (
-      <div className="grid grid-cols-[48px_48px_minmax(0,1fr)] gap-2 sm:grid-cols-[56px_56px_minmax(0,1fr)]">
-        <Button variant="danger" size="lg" className="px-0" aria-label="Отклонить" onClick={() => setRejecting(true)}><X className="h-6 w-6" /></Button>
-        <Button variant="glass" size="lg" className="px-0" aria-label="Отложить на 3 дня" pending={busy} onClick={() => decide("snooze")}><Clock className="h-5 w-5" /></Button>
-        <Button variant="accent" size="lg" className="px-3" pending={busy} onClick={() => decide("approve")}><PenLine className="h-5 w-5 max-[359px]:hidden" /> Написать</Button>
-      </div>
-    ) : null
+  const composing = Boolean(canWrite && (firstContact || followUpMode));
+  const words = wordCount(text);
+  const placeholder = hasPlaceholder(text);
+  const cannotSend = banned.length > 0 || !text.trim() || placeholder || Boolean(data && !data.targets.length && !channel);
+  const sendButton = data ? (
+    <Button variant="accent" size="lg" className="w-full min-w-0 px-2 text-[15px]" pending={busy} disabled={cannotSend} onClick={sendTouch}>
+      <Send className="h-5 w-5 shrink-0 max-[339px]:hidden" /> <span className="truncate">{data.targets.length ? "Скопировать и открыть чат" : "Скопировать и отметить"}</span>
+    </Button>
   ) : null;
+
+  // Футер — одна большая кнопка на всю ширину: на 375 px подпись помещается целиком.
+  const footer = data && composing && !touched && !rejecting ? sendButton : null;
 
   return (
     <Sheet
@@ -308,26 +324,94 @@ export function ItemPanel({ id }: { id: string | null }) {
       onClose={close}
       title={data?.organization.name ?? "Карточка"}
       subtitle={data ? [data.organization.city, data.segmentLabel, STATUS_LABEL[data.status]].filter(Boolean).join(" · ") : null}
-      badge={data ? <PriorityBadge priority={data.priority} score={data.score} /> : null}
+      badge={data ? <PriorityBadge priority={data.grade ?? data.priority} score={data.score} /> : null}
       footer={footer}
     >
       {!data ? (item.error ? <Notice tone="error">{item.error}</Notice> : <Skeleton rows={3} />) : (
         <div className="space-y-5">
           {error ? <Notice tone="error">{error}</Notice> : null}
-          {returned && (writing || followUpMode) ? <Notice tone="ok">Вернулись из чата. Если сообщение ушло — нажмите «{followUpMode ? "Напомнил" : "Отправил"}» внизу, тогда напоминания пойдут по плану.</Notice> : null}
+          {returned && composing && !touched ? <Notice tone="ok">Вернулись из чата. Если сообщение ушло — выберите канал и нажмите «Скопировать и отметить» внизу, тогда касания дня 4 и 8 пойдут по плану.</Notice> : null}
           {data.blocked ? <Notice tone="error">{data.blocked} Писать нельзя.</Notice> : null}
           {data.cardStatus !== "ready" ? <Notice tone="warn">Нет подтверждённого факта денег или хаоса — по стоп-правилу писать нельзя.</Notice> : null}
 
-          {hook ? <div className="tint-orange rounded-2xl border px-4 py-3 text-[15px] leading-6">«{hook}»</div> : null}
+          {touched ? (
+            <Notice tone="ok">
+              <span className="flex items-center justify-between gap-3">
+                <span>Касание записано ({touched.label}). Отправьте сообщение в чате.</span>
+                <Button size="sm" variant="light" onClick={() => goNext()}>Дальше <ArrowRight className="h-4 w-4" /></Button>
+              </span>
+            </Notice>
+          ) : null}
+
+          {data.dossier ? <DossierCard dossier={data.dossier} presetLabel={data.presetLabel} /> : hook ? <div className="tint-orange rounded-2xl border px-4 py-3 text-[15px] leading-6">«{hook}»</div> : null}
+
+          {composing && !touched && firstContact && !rejecting ? (
+            <div className="flex gap-2">
+              <Button size="sm" variant="danger" onClick={() => setRejecting(true)}><X className="h-4 w-4" /> Не подходит</Button>
+              <Button size="sm" pending={busy} onClick={() => decide("snooze")}><Clock className="h-4 w-4" /> Отложить на 3 дня</Button>
+            </div>
+          ) : null}
+
+          {composing && !touched ? (
+            <section className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-lg font-semibold">{followUpMode ? (data.touchKind === "day8" ? "День 8: польза без продажи" : "День 4: пример или кейс") : "Первое сообщение"}</h3>
+                {followUpMode ? <span className="text-sm text-[var(--h-muted)]">первое — {dayLabel(data.sentAt)}</span> : (
+                  <Segmented<Variant> value={variant} onChange={switchVariant} items={[{ key: "A", label: "Вариант A" }, { key: "B", label: "Вариант B" }]} />
+                )}
+              </div>
+              <textarea value={text} onChange={(event) => { setText(event.target.value); if (firstContact) writeDraft(draftKey, event.target.value); }} rows={8} className={textareaClass} aria-label="Текст сообщения" />
+              <div className={cx("text-xs", words > MAX_WORDS ? "text-[#ff9b9b]" : "text-[var(--h-faint)]")}>{words} из {MAX_WORDS} слов{words > MAX_WORDS ? " — сократите, длинное не дочитывают" : ""}</div>
+              {placeholder ? <Notice tone="warn">Замените текст в [квадратных скобках] реальным фактом из досье — без зацепки не отправить.</Notice> : null}
+              {banned.length ? <Notice tone="error">Уберите «{banned.join("», «")}» — такие сообщения игнорируют.</Notice> : null}
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={copy}><Copy className="h-4 w-4" /> Копировать</Button>
+                {firstContact ? <Button size="sm" pending={busy} onClick={rewrite}><Sparkles className="h-4 w-4" /> Переписать AI</Button> : null}
+              </div>
+              {data.targets.length ? (
+                <div>
+                  <div className="mb-2 text-sm font-medium text-[var(--h-muted)]">Куда откроется чат</div>
+                  <div className="flex flex-wrap gap-2">
+                    {data.targets.map((target, index) => <Chip key={target.label} active={index === targetIndex} onClick={() => setTargetIndex(index)}>{target.label}</Chip>)}
+                  </div>
+                  {data.targets[targetIndex]?.hint ? <p className="mt-2 text-xs text-[var(--h-faint)]">{data.targets[targetIndex].hint}</p> : null}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-sm text-[var(--h-muted)]">Telegram и MAX не найдены. Откройте другой канал, отправьте сами и отметьте, куда:</p>
+                  {data.links.length ? (
+                    <div className="glass divide-y divide-[var(--h-line)] overflow-hidden rounded-2xl">
+                      {data.links.map((link) => (
+                        <button key={link.href} disabled={banned.length > 0} onClick={() => openLink(link)} className="flex min-h-14 w-full items-center gap-3 px-4 text-left transition hover:bg-white/5 disabled:opacity-45">
+                          <span className="text-[var(--h-accent)]"><LinkIcon kind={link.kind} /></span>
+                          <span className="min-w-0 flex-1 truncate text-[15px]">{link.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : <p className="text-sm text-[var(--h-muted)]">Контактов нет — найдите их по ссылке на источник.</p>}
+                  <div className="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5">
+                    {CHANNELS.map((item) => <Chip key={item.key} active={channel === item.key} onClick={() => setChannel(item.key)}>{item.label}</Chip>)}
+                  </div>
+                </div>
+              )}
+            </section>
+          ) : null}
+
+          {["sent", "sleeping", "replied", "demo", "call", "estimate", "lost", "won"].includes(data.status) || data.tasks.length || data.touches.length ? (
+            <ReplyBox itemId={data.id} replies={data.replies} tasks={data.tasks} touches={data.touches} targets={data.targets} canReply={["sent", "sleeping", "replied", "demo", "call", "estimate", "lost"].includes(data.status) && !data.blocked} onChanged={refresh} />
+          ) : null}
 
           {data.card ? (
-            <div className="space-y-4">
+            <details className="text-sm" open={!data.dossier}>
+            <summary className="cursor-pointer text-[var(--h-muted)]">Факты скоринга</summary>
+            <div className="mt-3 space-y-4">
               <FactList label="Деньги" items={data.card.money} tone="money" />
               <FactList label="Хаос" items={data.card.chaos} tone="chaos" />
               <FactList label="Рост" items={data.card.growth} tone="growth" />
               {data.card.calc ? <p className="text-sm text-[var(--h-muted)]">{data.card.calc.text}</p> : null}
               {data.card.caseRef ? <p className="text-sm text-[var(--h-muted)]">Кейс NEEKLO: <b className="font-semibold text-[var(--h-text)]">{data.card.caseRef}</b></p> : null}
             </div>
+            </details>
           ) : null}
 
           <div className="flex flex-wrap gap-2">
@@ -358,35 +442,6 @@ export function ItemPanel({ id }: { id: string | null }) {
               </div>
               <button className="mt-3 text-sm text-[var(--h-muted)]" onClick={() => setRejecting(false)}>Отмена</button>
             </div>
-          ) : null}
-
-          {(writing || followUpMode) && canWrite ? (
-            <section className="space-y-3">
-              <div className="flex items-baseline justify-between">
-                <h3 className="text-lg font-semibold">{followUpMode ? `Напоминание ${data.followUpStep + 1} из 3` : "Сообщение"}</h3>
-                {followUpMode ? <span className="text-sm text-[var(--h-muted)]">первое — {dayLabel(data.sentAt)}</span> : null}
-              </div>
-              <textarea value={text} onChange={(event) => { setText(event.target.value); if (writing) writeDraft(draftKey, event.target.value); }} rows={8} className={textareaClass} aria-label="Текст сообщения" />
-              {banned.length ? <Notice tone="error">Уберите «{banned.join("», «")}» — такие сообщения игнорируют.</Notice> : null}
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" onClick={copy}><Copy className="h-4 w-4" /> Копировать</Button>
-                {writing ? <Button size="sm" pending={busy} onClick={rewrite}><Sparkles className="h-4 w-4" /> Переписать AI</Button> : null}
-              </div>
-              <div>
-                <div className="mb-2 text-sm font-medium text-[var(--h-muted)]">Открыть чат и отправить самому</div>
-                {data.links.length ? (
-                  <div className="glass divide-y divide-[var(--h-line)] overflow-hidden rounded-2xl">
-                    {data.links.map((link) => (
-                      <button key={link.href} disabled={banned.length > 0} onClick={() => openLink(link)} className="flex min-h-14 w-full items-center gap-3 px-4 text-left transition hover:bg-white/5 disabled:opacity-45">
-                        <span className="text-[var(--h-accent)]"><LinkIcon kind={link.kind} /></span>
-                        <span className="min-w-0 flex-1 truncate text-[15px]">{link.label}</span>
-                        {link.prefill ? <span className="text-xs text-[var(--h-faint)]">с текстом</span> : null}
-                      </button>
-                    ))}
-                  </div>
-                ) : <p className="text-sm text-[var(--h-muted)]">Контактов нет — найдите их по ссылке на источник.</p>}
-              </div>
-            </section>
           ) : null}
 
           {data.status === "sent" && !followUpMode ? (
@@ -436,20 +491,6 @@ export function ItemPanel({ id }: { id: string | null }) {
                   <Button size="md" variant="light" pending={busy} onClick={buildProposal}><Sparkles className="h-4 w-4" /> Собрать КП</Button>
                 </>
               )}
-            </section>
-          ) : null}
-
-          {["replied", "demo", "call"].includes(data.status) ? (
-            <section>
-              <h3 className="mb-2 text-lg font-semibold">Ответить клиенту</h3>
-              <div className="space-y-2">
-                {replyTemplates(scenarioOf(data.segment)).map((item) => (
-                  <button key={item.key} onClick={() => navigator.clipboard.writeText(item.text).then(() => toast({ text: "Текст скопирован — вставьте в чат" })).catch(() => toast({ text: "Скопируйте вручную", tone: "error" }))} className="glass block w-full rounded-2xl p-3.5 text-left transition hover:bg-white/[0.07]">
-                    <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-[var(--h-accent)]">{item.label}<Copy className="h-3.5 w-3.5" /></div>
-                    <p className="mt-1 text-[15px] leading-[21px] text-[var(--h-muted)]">{item.text}</p>
-                  </button>
-                ))}
-              </div>
             </section>
           ) : null}
 

@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { ExternalLink, Globe, Loader2, Search } from "lucide-react";
 import { useHunt } from "@/components/hunt/shell";
 import { useLive } from "@/components/hunt/data";
-import { Chip, Empty, Glass, Notice, PriorityBadge, Skeleton, cx } from "@/components/hunt/ui";
+import { Chip, Empty, Glass, Notice, PriorityBadge, Segmented, Skeleton, cx } from "@/components/hunt/ui";
+import { FunnelBoard } from "@/components/hunt/funnel-board";
 import { STATUS_LABEL, dayLabel } from "@/components/hunt/types";
 
 type Step = { key: string; label: string; hint: string; count: number };
@@ -46,6 +47,7 @@ const selectClass = "[color-scheme:dark] h-10 rounded-full border border-[var(--
 
 export default function HuntPipelinePage() {
   const { version, open } = useHunt();
+  const [mode, setMode] = useState<"numbers" | "list">("numbers");
   const [step, setStep] = useState<string | null>(null);
   const [segment, setSegment] = useState("");
   const [city, setCity] = useState("");
@@ -75,8 +77,13 @@ export default function HuntPipelinePage() {
     <div className="pt-2">
       <p className="text-sm text-[var(--h-faint)]">Весь цикл</p>
       <h1 className="mt-1 text-[32px] font-semibold leading-[38px] tracking-tight">Воронка</h1>
-      <p className="mt-1 text-[15px] text-[var(--h-muted)]">От находки парсером до сделки. Нажмите шаг — внизу лиды на нём, карточка открывается с действиями.</p>
+      <p className="mt-1 text-[15px] text-[var(--h-muted)]">По сегментам и вариантам текста: отправлено, ответы, интерес, прототипы, созвоны, КП, авансы — и что решать.</p>
 
+      <div className="sticky top-[68px] z-20 -mx-4 mt-4 px-4 py-2 backdrop-blur-md">
+        <Segmented<"numbers" | "list"> value={mode} onChange={setMode} items={[{ key: "numbers", label: "Цифры и решение" }, { key: "list", label: "Лиды по шагам" }]} />
+      </div>
+      {mode === "numbers" ? <div className="mt-3"><FunnelBoard version={version} /></div> : (
+      <>
       <div className="no-scrollbar -mx-4 mt-5 flex gap-2 overflow-x-auto px-4 pb-1">
         {(data?.steps ?? []).map((item, index) => (
           <button
@@ -162,6 +169,8 @@ export default function HuntPipelinePage() {
           </Glass>
         ))}
       </div>
+      </>
+      )}
     </div>
   );
 }

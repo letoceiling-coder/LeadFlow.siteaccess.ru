@@ -33,6 +33,54 @@ export type HuntItem = {
   error: string | null;
   projectId: string | null;
   updatedAt: string;
+  preset?: string | null;
+  presetLabel?: string | null;
+  grade?: string | null;
+  hook?: string | null;
+  variant?: string | null;
+};
+
+/* ───────────── Цикл лида (бриф 27.11) ───────────── */
+
+export type ChatTarget = { channel: "telegram" | "max"; label: string; href: string | null; hint: string | null };
+export type DossierChannel = { kind: string; value: string; label: string; direct: boolean };
+export type Dossier = {
+  preset: string | null;
+  site: { verdict: "none" | "weak" | "ok"; why: string };
+  channels: DossierChannel[];
+  lastPost: { text: string; link: string | null; date: string } | null;
+  reason: { text: string; source: string } | null;
+  hook: string;
+  hookSource: string | null;
+  topic: string | null;
+  grade: string;
+  gradeWhy: string[];
+};
+export type ReplyNext = { status: string; task: string | null; hint: string; questions: string[]; text: string };
+export type PlanAction = {
+  key: string;
+  kind: "task" | "dialog" | "day4" | "day8" | "write" | "new";
+  outreachId: string;
+  name: string;
+  city: string | null;
+  grade: string | null;
+  preset: string | null;
+  presetLabel: string | null;
+  note: string;
+  text: string | null;
+  taskId: string | null;
+  targets: ChatTarget[];
+};
+export type Plan = { actions: PlanAction[]; total: number; limit: number; more: number; counts: Record<PlanAction["kind"], number>; sentToday: number };
+export type FunnelRow = { key: string; label: string; sent: number; replies: number; replyRate: number | null; interest: number; prototypes: number; calls: number; proposals: number; prepaid: number };
+export type Funnel = {
+  days: number | null;
+  total: FunnelRow;
+  bySegment: FunnelRow[];
+  byVariant: FunnelRow[];
+  cells: FunnelRow[];
+  decisions: { key: string; label: string; status: string; title: string; text: string }[];
+  day: { sent: number; followUps: number; replies: number; interest: number; tasksDone: number; openTasks: number; bySegmentVariant: { label: string; count: number }[]; replyTypes: { label: string; count: number }[]; change: string };
 };
 
 export type Today = {
@@ -127,7 +175,7 @@ export const STATUS_LABEL: Record<string, string> = {
   estimate: "Смета",
   won: "Сделка",
   lost: "Отказ",
-  sleeping: "Спящий",
+  sleeping: "Тишина",
   optout: "Просит не писать",
 };
 

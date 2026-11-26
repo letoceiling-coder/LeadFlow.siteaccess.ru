@@ -24,6 +24,7 @@ import {
   qualifyPending,
   retryFailed,
   rewritePitch,
+  rewriteInputSchema,
   savePitch,
   sentSchema,
   setStatus,
@@ -39,6 +40,8 @@ import { aiStatus, aiUpdateSchema, updateAi } from "../services/ai-settings";
 import { demoEditSchema, demoStartSchema, editDemo, getDemo, previewDemo, publishDemo, rebuildDemo, startDemo } from "../services/hunt-demo";
 import { pipeline, pipelineQuerySchema } from "../services/pipeline";
 import { alertStatus, confirmBinding, startBinding, testAlert, unbindTelegram } from "../services/alerts";
+import { finishTask, funnel, plan, recordReply, recordTouch, replySchema, touchSchema, undoTouch } from "../services/lead-cycle";
+import { PRESETS } from "../domain/segments";
 
 const bindSchema = z.object({ botToken: z.string().trim().max(200).optional() });
 
@@ -82,6 +85,25 @@ export async function huntRoutes(request: Request, session: AppSession, path: st
     return json(await pipeline(tenantId, pipelineQuerySchema.parse(Object.fromEntries(url.searchParams))));
   }
   if (section === "segments" && method === "GET") return json(SEGMENTS);
+  /* S1 «Цикл лида» (бриф 27.11): план дня, воронка по сегментам и вариантам, пресеты, касания, ответы, задачи. */
+  if (section === "presets" && method === "GET") return json(PRESETS);
+  if (section === "plan" && method === "GET") {
+    allow(session, "org.read");
+    return json(await plan(tenantId));
+  }
+  if (section === "funnel" && method === "GET") {
+    allow(session, "org.read");
+    const days = url.searchParams.get("days");
+    return json(await funnel(tenantId, days ? int(days, 30, 1, 365) : undefined));
+  }
+  if (section === "touches" && id && action === "undo" && method === "POST") {
+    allow(session, "lead.manage");
+    return json(await undoTouch(tenantId, session.userId, id));
+  }
+  if (section === "tasks" && id && action === "done" && method === "POST") {
+    allow(session, "lead.manage");
+    return json(await finishTask(tenantId, session.userId, id));
+  }
   if (section === "next" && method === "GET") {
     allow(session, "org.read");
     return json(await nextItem(tenantId, url.searchParams.get("after")));
@@ -213,11 +235,13 @@ export async function huntRoutes(request: Request, session: AppSession, path: st
   allow(session, "lead.manage");
   if (itemAction === "decide" && method === "POST") return json(await decide(tenantId, session.userId, itemId, decisionSchema.parse(await readJson(request))));
   if (itemAction === "fact" && method === "POST") return json(await addFact(tenantId, session.userId, itemId, factSchema.parse(await readJson(request))));
-  if (itemAction === "pitch" && path[3] === "rewrite" && method === "POST") return json(await rewritePitch(tenantId, itemId));
+  if (itemAction === "pitch" && path[3] === "rewrite" && method === "POST") return json(await rewritePitch(tenantId, itemId, rewriteInputSchema.parse(await readJson(request).catch(() => ({})))));
   if (itemAction === "proposal" && method === "POST") return json(await rebuildProposal(tenantId, itemId, session.userId));
   if (itemAction === "pitch" && method === "PUT") return json(await savePitch(tenantId, itemId, pitchSchema.parse(await readJson(request)).text));
   if (itemAction === "sent" && method === "POST") return json(await markSent(tenantId, session.userId, session.role, itemId, sentSchema.parse(await readJson(request))));
   if (itemAction === "followup" && method === "POST") return json(await followUpDone(tenantId, session.userId, itemId, followUpSchema.parse(await readJson(request)).channel));
+  if (itemAction === "touch" && method === "POST") return json(await recordTouch(tenantId, session.userId, session.role, itemId, touchSchema.parse(await readJson(request))));
+  if (itemAction === "reply" && method === "POST") return json(await recordReply(tenantId, session.userId, itemId, replySchema.parse(await readJson(request))));
   if (itemAction === "status" && method === "POST") return json(await setStatus(tenantId, session.userId, itemId, statusSchema.parse(await readJson(request))));
   throw new ApiError(404, "Действие не найдено", "not_found");
 }

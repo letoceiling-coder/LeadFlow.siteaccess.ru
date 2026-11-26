@@ -8,6 +8,7 @@ import { Button, Glass, Notice, Ring, Segmented, Skeleton } from "@/components/h
 import { dayLabel, rub, type SheetStatus } from "@/components/hunt/types";
 import { HealthCard } from "@/components/hunt/health-card";
 import { InsightsCard } from "@/components/hunt/insights";
+import { FunnelBoard } from "@/components/hunt/funnel-board";
 
 type Stats = {
   days: number;
@@ -47,6 +48,7 @@ export default function HuntStatsPage() {
         <Segmented value={days} onChange={setDays} items={[{ key: "7", label: "7 дней" }, { key: "14", label: "14 дней" }, { key: "30", label: "30 дней" }]} />
       </div>
 
+      <div className="mt-3"><FunnelBoard version={version} /></div>
       <div id="health" className="mt-3 scroll-mt-28"><HealthCard /></div>
 
       {stats.error ? <Notice tone="error">{stats.error}</Notice> : !data ? <div className="mt-3"><Skeleton rows={3} /></div> : (

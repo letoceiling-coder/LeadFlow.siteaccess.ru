@@ -228,12 +228,11 @@ describe("питч", () => {
     expect(links.find((item) => item.kind === "vk")?.href).toBe("https://vk.me/sushimaster");
   });
 
-  it("follow-up D+3, D+7, D+14, потом конец", () => {
+  it("касания по брифу 27.11: день 4 (+3), день 8 (+7), потом пауза", () => {
     const sent = new Date("2026-11-23T10:00:00Z");
     expect(nextFollowUpAt(sent, 0)?.toISOString()).toBe("2026-11-26T10:00:00.000Z");
     expect(nextFollowUpAt(sent, 1)?.toISOString()).toBe("2026-11-30T10:00:00.000Z");
-    expect(nextFollowUpAt(sent, 2)?.toISOString()).toBe("2026-12-07T10:00:00.000Z");
-    expect(nextFollowUpAt(sent, 3)).toBeNull();
+    expect(nextFollowUpAt(sent, 2)).toBeNull();
   });
 });
 

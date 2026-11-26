@@ -103,8 +103,8 @@ function lowerFirst(value: string) {
   return value ? value[0].toLowerCase() + value.slice(1) : value;
 }
 
-/** Follow-up по стратегии: D+3, D+7, D+14, потом — «спящие». */
-export const FOLLOW_UP_DAYS = [3, 7, 14] as const;
+/** Касания по брифу 27.11: день 4 (+3 к первому) и день 8 (+7), потом пауза — статус «тишина». */
+export const FOLLOW_UP_DAYS = [3, 7] as const;
 
 export function followUpText(step: number) {
   if (step <= 1) return "Добрый день! Поднимаю сообщение выше — посмотрели? Могу скинуть экран, займёт минуту.";
