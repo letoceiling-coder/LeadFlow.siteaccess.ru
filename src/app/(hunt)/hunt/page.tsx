@@ -9,9 +9,10 @@ import { ItemCard } from "@/components/hunt/item-card";
 import { HealthStrip } from "@/components/hunt/health-card";
 import { LiveSearches } from "@/components/hunt/search-progress";
 import { Button, Chip, Empty, Glass, Notice, Segmented, Skeleton, cx, errorText, useToast } from "@/components/hunt/ui";
-import { STATUS_LABEL, dayLabel, type Dialogs, type HuntItem, type Today } from "@/components/hunt/types";
+import { STATUS_LABEL, dayLabel, type Dialogs, type HuntItem, type Plan, type Today } from "@/components/hunt/types";
+import { PlanList } from "@/components/hunt/item-plan";
 
-type Tab = "new" | "review" | "write" | "remind";
+type Tab = "plan" | "new" | "review" | "write" | "remind";
 
 function greeting(timeZone: string) {
   const hour = Number(new Intl.DateTimeFormat("ru-RU", { hour: "numeric", hourCycle: "h23", timeZone }).format(new Date()));
@@ -27,9 +28,11 @@ export default function HuntTodayPage() {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const todayRes = useLive<Today>("/api/hunt/today?limit=50", version, 15000);
   const dialogs = useLive<Dialogs>("/api/hunt/dialogs", version, 30000);
+  const planRes = useLive<Plan>("/api/hunt/plan", version, 30000);
   const data = todayRes.data;
   // Сначала срочное: напоминания и сроки по диалогам — самые дешёвые ответы.
-  const tab: Tab = picked ?? (data?.followUps ? "remind" : data?.total ? "new" : data?.reviewTotal ? "review" : "new");
+  // По брифу «Сегодня» — это план: до 30 действий (новые A, касания дня 4 и 8, задачи). Остальные вкладки — для разбора.
+  const tab: Tab = picked ?? "plan";
 
   useEffect(() => { setHidden(new Set()); }, [data]);
 
@@ -113,6 +116,7 @@ export default function HuntTodayPage() {
           value={tab}
           onChange={setTab}
           items={[
+            { key: "plan", label: "План", count: planRes.data ? Math.min(planRes.data.total, planRes.data.limit) : undefined },
             { key: "new", label: "Новые", count: data?.total },
             { key: "review", label: "Проверка", count: data?.reviewTotal },
             { key: "write", label: "Писать", count: data?.approved },
@@ -125,6 +129,10 @@ export default function HuntTodayPage() {
         {data?.queued ? <Notice><span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Скоринг идёт: {data.queued} карточек. Лента обновится сама.</span></Notice> : null}
         {data && !data.ai.ready && tab === "new" ? <Notice tone="warn">AI-скоринг выключен: {data.ai.reason} Без AI «деньги» видны только по отзывам — проверьте карточки во вкладке «Проверить».</Notice> : null}
         {data?.failed ? <Notice tone="warn"><span className="flex items-center justify-between gap-3">Не прошли скоринг: {data.failed}. <button onClick={retry} className="inline-flex items-center gap-1 font-semibold text-[var(--h-accent)]"><RotateCcw className="h-4 w-4" /> Повторить</button></span></Notice> : null}
+
+        {tab === "plan" ? (
+          planRes.error ? <Notice tone="error">{planRes.error}</Notice> : !planRes.data ? <Skeleton rows={4} /> : <PlanList plan={planRes.data} role={user.role} onOpen={(id) => open("item", id)} onChanged={refresh} />
+        ) : null}
 
         {tab === "new" ? (
           todayRes.loading ? <Skeleton rows={4} /> : todayRes.error ? <Notice tone="error">{todayRes.error}</Notice> : (

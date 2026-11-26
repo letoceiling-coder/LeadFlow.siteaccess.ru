@@ -566,7 +566,9 @@ export async function savePitch(tenantId: string, id: string, text: string) {
 
 const rewriteSchema = z.object({ text: z.string().min(20).max(1500) });
 
-export async function rewritePitch(tenantId: string, id: string) {
+export const rewriteInputSchema = z.object({ text: z.string().trim().max(2000).optional() }).default({});
+
+export async function rewritePitch(tenantId: string, id: string, input: z.infer<typeof rewriteInputSchema> = {}) {
   const row = await owned(tenantId, id);
   const card = row.card as unknown as ObservationCard | null;
   if (!card || row.cardStatus !== "ready") throw new ApiError(409, "Сначала нужна готовая карточка с фактами.", "card_not_ready");
@@ -574,21 +576,24 @@ export async function rewritePitch(tenantId: string, id: string) {
   const integration = await requireReady(tenantId, "openrouter", "Переписать питч");
   await assertBudget(tenantId, settings.ai.maxCostPerBriefUsd);
   const model = resolveTaskModel("message", settings.ai.messageModel || process.env.AI_DEFAULT_MODEL);
-  const draft = row.pitch || buildPitch(card);
+  const draft = input.text || row.pitch || buildPitch(card);
+  const dossier = row.dossier as unknown as Dossier | null;
+  // Бриф 27.11: до 80 слов, почему вам → что заметил → чем помогли похожим → «интересно?». Кейсы — только из черновика.
   const system = [
-    "Ты пишешь первое сообщение владельцу бизнеса. Цель — получить любой ответ, не продать.",
-    "Скелет из трёх блоков: 1) крючок-факт «Увидел, что …. Верно?» 2) диагноз — что из-за этого теряется 3) мягкий оффер «Набросал, как это разгрузить … Скинуть глянуть?».",
-    "До 600 символов, на «вы», без ссылок, без эмодзи, без цены, без выдуманных цифр.",
-    "Запрещено: «мы делаем сайты», «сделаем сайт», «AI-агенты», «автоматизация», «интересный проект».",
-    "Используй только факты из карточки (money, chaos, observation). Верни JSON {\"text\": \"...\"}.",
+    "Ты переписываешь первое сообщение владельцу или руководителю организации так, чтобы оно звучало как живой человек, а не нейросеть. Цель — получить любой ответ, не продать.",
+    "Структура: почему пишу именно вам → что заметил (зацепка, дословно по смыслу) → чем помогли похожим (только кейсы, которые уже есть в черновике) → короткий вопрос «Интересно?».",
+    "До 80 слов, на «вы», без ссылок, без эмодзи, без цены и сроков, без просьбы о созвоне, без выдуманных фактов, цифр и клиентов. Не начинай с «Меня зовут».",
+    "Запрещено: «мы делаем сайты», «сделаем сайт», «AI-агенты», «автоматизация», «интересный проект», «уникальное предложение».",
+    "Если в черновике есть текст в квадратных скобках — оставь его как есть. Верни JSON {\"text\": \"...\"}.",
   ].join(" ");
-  const user = JSON.stringify({ organization: row.organization.name, city: row.organization.city, facts: { money: card.money, chaos: card.chaos, observation: card.observation }, draft });
+  const user = JSON.stringify({ organization: row.organization.name, city: row.organization.city, hook: dossier?.hook ?? card.observation, topic: dossier?.topic ?? null, facts: { money: card.money, chaos: card.chaos }, draft });
   const result = await completeJson({ baseUrl: String(integration.config.baseUrl), apiKey: integration.secrets.apiKey, secrets: integration.secrets, model, system, user, schema: rewriteSchema, maxTokens: 700 });
   const cost = typeof result.usage.cost === "number" ? result.usage.cost : null;
   await recordCost({ tenantId, provider: "openrouter", operation: "pitch", amountUsd: cost, organizationId: row.organizationId, refType: "outreach", refId: id });
   const text = result.data.text.trim();
   const banned = bannedIn(text);
-  return { text: banned.length ? draft : text, banned, fallback: banned.length > 0 };
+  const tooLong = text.split(/\s+/).length > 80;
+  return { text: banned.length || tooLong ? draft : text, banned, fallback: banned.length > 0 || tooLong };
 }
 
 export const CHANNELS = ["telegram", "max", "whatsapp", "vk", "email", "phone", "instagram", "avito", "other"] as const;

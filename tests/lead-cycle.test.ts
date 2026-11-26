@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyReply, replyNext, REPLY_TYPES } from "../src/lib/domain/replies";
-import { NOT_FOUND, chatTargets, channelsOf, checkHook, gradeOf, hookFromPost, postFacts, siteVerdict, wordCount } from "../src/lib/domain/dossier";
+import { NOT_FOUND, chatTargets, channelsOf, checkHook, gradeOf, hookFromPost, postFacts, reasonOf, siteVerdict, wordCount } from "../src/lib/domain/dossier";
 import { MAX_WORDS, buildDrafts, followUpDraft, hasPlaceholder, touchKind } from "../src/lib/domain/drafts";
 import { changeForTomorrow, decision50, funnelRows, type FunnelRecord } from "../src/lib/domain/funnel";
 import { PRESETS, detectPreset, presetScore } from "../src/lib/domain/segments";
@@ -86,7 +86,8 @@ describe("досье: каналы и посты", () => {
   it("посты из raw.telegram — свежие сверху", () => {
     const posts = postFacts(raw);
     expect(posts[0].link).toBe("https://t.me/fondhelp/2");
-    expect(hookFromPost(posts)).toContain("25.11");
+    expect(hookFromPost(posts)).toBe("В канале 25.11 написали: «Открыли сбор на реабилитацию Ани после операции»");
+    expect(reasonOf(posts)?.text).toMatch(/^Сбор или событие/);
   });
   it("канал организации — не прямой канал, личный @ и мобильный — прямой", () => {
     const channels = channelsOf([{ type: "telegram", value: "@fondhelp" }, { type: "telegram", value: "@anna_director" }, { type: "phone", value: "+7 (912) 000-11-22" }, { type: "phone", value: "+7 (343) 200-00-00" }, { type: "email", value: "a@b.ru" }], raw);
