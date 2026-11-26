@@ -3,7 +3,18 @@
  * Чистые функции без сети и базы — их же использует квалификация (S1) через `telegramFacts(raw)`.
  */
 
-export type TelegramPost = { id: number; date: string; text: string; link: string | null };
+export type TelegramPost = {
+  id: number;
+  date: string;
+  text: string;
+  link: string | null;
+  /** Тип вложения: photo, video, document, webpage… (null — только текст). */
+  media?: string | null;
+  /** Пересланный чужой пост — не факт об организации. */
+  forwarded?: boolean;
+  /** Ссылки из разметки поста (скрытые под текстом) — для поиска сайта и контактов. */
+  urls?: string[];
+};
 export type TelegramRaw = {
   username: string;
   title: string;
@@ -38,6 +49,8 @@ export function telegramRaw(raw: unknown): TelegramRaw | null {
         date: typeof item.date === "string" ? item.date : "",
         text: typeof item.text === "string" ? item.text : "",
         link: typeof item.link === "string" ? item.link : null,
+        media: typeof item.media === "string" ? item.media : null,
+        forwarded: item.forwarded === true,
       })),
   };
 }
@@ -50,6 +63,7 @@ export function telegramFacts(raw: unknown): { text: string; link: string | null
   const tg = telegramRaw(raw);
   if (!tg) return [];
   return tg.posts
+    .filter((post) => !post.forwarded)
     .map((post) => ({ text: cleanText(post.text).slice(0, 600), link: post.link, date: post.date }))
     .filter((post) => post.text.length >= 20)
     .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
@@ -65,13 +79,13 @@ export function cleanText(text: string) {
 export type ExtractedContacts = { websites: string[]; usernames: string[]; phones: string[]; emails: string[] };
 
 const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
-const URL_RE = /\b((?:https?:\/\/)?(?:www\.)?(?:[a-zа-я0-9-]+\.)+(?:ru|рф|su|com|org|net|info|online|site|pro|io|me|moscow|spb|art|museum|fund|club|store|shop|space|tech|digital|media|team)(?:\/[^\s)»"'<>,]*)?)/giu;
+const URL_RE = /(?<![a-zа-яё0-9@.-])((?:https?:\/\/)?(?:www\.)?(?:[a-zа-яё0-9-]+\.)+(?:ru|рф|su|com|org|net|info|online|site|pro|io|me|moscow|spb|art|museum|fund|club|store|shop|space|tech|digital|media|team)(?:\/[^\s)»"'<>,]*)?)/giu;
 const TG_LINK_RE = /(?:https?:\/\/)?(?:t\.me|telegram\.me)\/([a-z0-9_]{4,32})(?:\/\d+)?/gi;
 const MENTION_RE = /(^|[^a-z0-9_@.\/])@([a-z][a-z0-9_]{3,31})\b/gi;
 const PHONE_RE = /(?:\+7|\b8)[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}\b/g;
 
 /** Хосты, которые не сайт организации (соцсети, хостинги ссылок, площадки сборов). */
-const NOT_SITE = /(^|\.)(t\.me|telegram\.me|telegra\.ph|vk\.com|vk\.me|vk\.cc|ok\.ru|youtube\.com|youtu\.be|instagram\.com|facebook\.com|tiktok\.com|dzen\.ru|rutube\.ru|clck\.ru|bit\.ly|goo\.gl|wa\.me|max\.ru|taplink\.cc|linktr\.ee|forms\.gle|google\.com|yandex\.ru|mail\.ru|gmail\.com|ya\.ru|disk\.yandex\.ru|docs\.google\.com|apple\.com|play\.google\.com|wikipedia\.org)$/i;
+const NOT_SITE = /(^|\.)(vk\.ru|ria\.ru|tass\.ru|rbc\.ru|lenta\.ru|kommersant\.ru|iz\.ru|nspk\.ru|cloudtips\.ru|yoomoney\.ru|sberbank\.ru|sber\.ru|tbank\.ru|tinkoff\.ru|vtb\.ru|alfabank\.ru|dobro\.ru|mos\.ru|gosuslugi\.ru|timepad\.ru|culture\.ru|max\.ru|vkvideo\.ru|vk\.link|t\.me|telegram\.me|telegra\.ph|vk\.com|vk\.me|vk\.cc|ok\.ru|youtube\.com|youtu\.be|instagram\.com|facebook\.com|tiktok\.com|dzen\.ru|rutube\.ru|clck\.ru|bit\.ly|goo\.gl|wa\.me|max\.ru|taplink\.cc|linktr\.ee|forms\.gle|google\.com|yandex\.ru|mail\.ru|gmail\.com|ya\.ru|disk\.yandex\.ru|docs\.google\.com|apple\.com|play\.google\.com|wikipedia\.org)$/i;
 /** Служебные ники Telegram, которые никогда не контакт организации. */
 const SERVICE_USERNAMES = new Set(["joinchat", "addstickers", "share", "proxy", "socks", "addlist", "boost", "iv", "c", "s", "telegram", "botfather", "durov", "gmail", "mail", "yandex"]);
 
@@ -123,7 +137,9 @@ export function extractContacts(text: string, self?: string | null): ExtractedCo
   for (const match of withoutEmails.matchAll(URL_RE)) {
     const domain = siteDomain(match[1]);
     if (!domain || NOT_SITE.test(domain)) continue;
-    if (!websites.has(domain)) websites.set(domain, `https://${domain}`);
+    // Кириллический домен показываем как написан («фонд.рф»), сравниваем — по punycode.
+    const shown = match[1].replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0].toLowerCase();
+    if (!websites.has(domain)) websites.set(domain, `https://${shown}`);
   }
   for (const match of source.matchAll(PHONE_RE)) {
     const phone = normalizePhone(match[0]);
@@ -147,11 +163,11 @@ export function mergeContacts(...parts: ExtractedContacts[]): ExtractedContacts 
  * Контакты для карточки. В постах упоминают кого угодно (гостей, партнёров), поэтому из постов берём
  * только то, что повторяется хотя бы дважды или стоит рядом со словами «пишите», «менеджер», «связь».
  */
-export function channelContacts(about: string | null | undefined, posts: { text: string }[], self?: string | null): ExtractedContacts {
+export function channelContacts(about: string | null | undefined, posts: { text: string; urls?: string[] }[], self?: string | null): ExtractedContacts {
   const fromAbout = extractContacts(about || "", self);
   const counts = new Map<string, number>();
   const marked = new Set<string>();
-  const perPost = posts.map((post) => extractContacts(post.text, self));
+  const perPost = posts.map((post) => extractContacts([post.text, ...(post.urls ?? [])].join("\n"), self));
   posts.forEach((post, index) => {
     const contacts = perPost[index];
     const keys = [...contacts.websites, ...contacts.usernames.map((u) => `@${u}`), ...contacts.phones, ...contacts.emails];
@@ -171,6 +187,48 @@ export function channelContacts(about: string | null | undefined, posts: { text:
   return { websites: merged.websites.slice(0, 3), usernames: merged.usernames.slice(0, 5), phones: merged.phones.slice(0, 3), emails: merged.emails.slice(0, 3) };
 }
 
+/** Сайт организации среди найденных: домен похож на ник или название канала (а не на СМИ, спонсора, платёжку). */
+export function officialSite(websites: string[], username: string | null | undefined, title?: string | null): string | null {
+  const handle = (username || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const titleLatin = translit(title || "").replace(/[^a-z0-9]/g, "");
+  for (const site of websites) {
+    const host = site.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0].toLowerCase();
+    const root = rootHost(host);
+    if (!root) continue;
+    const label = translit(root.split(".").slice(0, -1).join("")).replace(/[^a-z0-9]/g, "");
+    if (!label) continue;
+    const related = (label.length >= 3 && (handle.includes(label) || (handle.length >= 4 && label.includes(handle)))) || commonRun(label, handle) >= 5 || commonRun(label, titleLatin) >= 5;
+    if (related) return `https://${root}`;
+  }
+  return null;
+}
+
+/** Корневой домен: ticket.rusmuseum.ru → rusmuseum.ru (но museum.spb.ru остаётся целиком). */
+function rootHost(host: string) {
+  const parts = host.split(".").filter(Boolean);
+  if (parts.length < 2) return null;
+  const secondLevel = /^(spb|msk|com|org|net|edu|gov|nov|nnov|kazan|ekb|perm|samara)$/;
+  const keep = parts.length >= 3 && secondLevel.test(parts[parts.length - 2]) ? 3 : 2;
+  return parts.slice(-keep).join(".");
+}
+
+function commonRun(a: string, b: string) {
+  let best = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    for (let j = 0; j < b.length; j += 1) {
+      let k = 0;
+      while (a[i + k] && a[i + k] === b[j + k]) k += 1;
+      if (k > best) best = k;
+    }
+  }
+  return best;
+}
+
+const TRANSLIT: Record<string, string> = { а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y", к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "ts", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya" };
+function translit(text: string) {
+  return text.toLowerCase().replace(/[а-яё]/g, (char) => TRANSLIT[char] ?? "");
+}
+
 /* ───────────── Досье ───────────── */
 
 export type ChannelDossier = {
@@ -179,15 +237,22 @@ export type ChannelDossier = {
   postsPerWeek: number | null;
   postsSeen: number;
   active: boolean;
+  /** Сколько из просмотренных постов с видео и с фото — повод для зацепки «рассказываете текстом и фото». */
+  media: { video: number; photo: number; textOnly: number };
   summary: string;
 };
 
-export function channelDossier(posts: { date: string; text: string }[], now = new Date()): ChannelDossier {
+export function channelDossier(posts: { date: string; text: string; media?: string | null }[], now = new Date()): ChannelDossier {
+  const media = {
+    video: posts.filter((post) => /video|gif|round/i.test(post.media || "")).length,
+    photo: posts.filter((post) => /photo|image/i.test(post.media || "")).length,
+    textOnly: posts.filter((post) => !post.media || post.media === "webpage").length,
+  };
   const dates = posts
     .map((post) => new Date(post.date).getTime())
     .filter((time) => Number.isFinite(time))
     .sort((a, b) => b - a);
-  if (!dates.length) return { lastPostAt: null, daysSinceLastPost: null, postsPerWeek: null, postsSeen: 0, active: false, summary: "Постов не видно" };
+  if (!dates.length) return { lastPostAt: null, daysSinceLastPost: null, postsPerWeek: null, postsSeen: 0, active: false, media, summary: "Постов не видно" };
   const day = 24 * 60 * 60 * 1000;
   const last = dates[0];
   const since = Math.max(0, Math.floor((now.getTime() - last) / day));
@@ -196,7 +261,8 @@ export function channelDossier(posts: { date: string; text: string }[], now = ne
   const active = since <= 60;
   const freq = perWeek == null ? "один пост в выборке" : perWeek >= 7 ? "ежедневно" : perWeek >= 1 ? `≈${perWeek} поста в неделю` : `≈${Math.round(perWeek * 4.3 * 10) / 10} в месяц`;
   const when = since === 0 ? "сегодня" : since === 1 ? "вчера" : `${since} дн. назад`;
-  return { lastPostAt: new Date(last).toISOString(), daysSinceLastPost: since, postsPerWeek: perWeek, postsSeen: dates.length, active, summary: `Последний пост ${when}, ${freq}` };
+  const mix = `видео в ${media.video} из ${posts.length}`;
+  return { lastPostAt: new Date(last).toISOString(), daysSinceLastPost: since, postsPerWeek: perWeek, postsSeen: dates.length, active, media, summary: `Последний пост ${when}, ${freq}, ${mix}` };
 }
 
 /* ───────────── Отбор каналов ───────────── */
@@ -212,7 +278,7 @@ const ORG_TITLE = /(фонд|музе|галере|выставк|центр|а�
 
 export type ChannelVerdict = { ok: boolean; score: number; reason: string };
 
-export function judgeChannel(peer: PeerLike, niche: string): ChannelVerdict {
+export function judgeChannel(peer: PeerLike, niche: string, city?: string | null): ChannelVerdict {
   if (!peer.username) return { ok: false, score: 0, reason: "нет публичного имени" };
   if (!["channel", "supergroup", "group", "megagroup"].includes(peer.type)) return { ok: false, score: 0, reason: `тип ${peer.type}` };
   if (/bot$/i.test(peer.username)) return { ok: false, score: 0, reason: "бот" };
@@ -229,6 +295,8 @@ export function judgeChannel(peer: PeerLike, niche: string): ChannelVerdict {
   if (peer.type === "channel") score += 1;
   if (members != null && members >= 300 && members <= 50_000) score += 1;
   if (peer.verified) score += 1;
+  // Город задан — местные каналы вперёд федеральных.
+  if (city && mentionsCity(title, city)) score += 3;
   return { ok: true, score, reason: "похоже на организацию" };
 }
 
@@ -237,8 +305,9 @@ export function judgeContent(about: string | null | undefined, posts: { date: st
   const dossier = channelDossier(posts, now);
   if (!dossier.postsSeen) return { ok: false, score: 0, reason: "нет постов" };
   if (dossier.daysSinceLastPost != null && dossier.daysSinceLastPost > 365) return { ok: false, score: 0, reason: "не обновлялся больше года" };
-  const text = `${about || ""}\n${posts.map((post) => post.text).join("\n")}`;
-  if (/(складчин|слив курс|промокод|казино|ставки на спорт)/i.test(text)) return { ok: false, score: 0, reason: "реклама/складчина" };
+  // Один пост с промокодом партнёра бывает и у фонда — отсеиваем, только если такого больше половины.
+  const spam = posts.filter((post) => /(складчин|слив курс|промокод|казино|ставки на спорт|букмекер)/i.test(post.text)).length;
+  if (/(складчин|казино|букмекер)/i.test(about || "") || (posts.length >= 2 && spam * 2 > posts.length)) return { ok: false, score: 0, reason: "реклама/складчина" };
   return { ok: true, score: dossier.active ? 2 : 1, reason: dossier.summary };
 }
 

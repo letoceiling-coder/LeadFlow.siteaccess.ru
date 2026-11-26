@@ -16,6 +16,7 @@ import {
   judgeContent,
   mentionsCity,
   normalizeUsername,
+  officialSite,
   searchPhrases,
   type TelegramPost,
 } from "../domain/telegram-facts";
@@ -171,7 +172,7 @@ export async function runTelegramSearchStep(searchId: string, jobTenantId: strin
         const peers = await reader.search(phrase, 30);
         counters.requests += 1;
         state.phraseIndex += 1;
-        addCandidates(state, peers, search.niche, phrase);
+        addCandidates(state, peers, search.niche, search.city, phrase);
         await save(search.id, state, counters);
         continue;
       }
@@ -194,7 +195,7 @@ export async function runTelegramSearchStep(searchId: string, jobTenantId: strin
         counters.reads += 1;
         state.readIndex += 1;
         if (history) {
-          const saved = await saveChannel(search, candidate, history, reader, counters);
+          const saved = await saveChannel(search, candidate, history);
           if (saved) {
             counters.found += 1;
             if (saved.merged) counters.merged += 1;
@@ -236,11 +237,11 @@ export async function runTelegramSearchStep(searchId: string, jobTenantId: strin
   }
 }
 
-function addCandidates(state: SearchState, peers: TgPeer[], niche: string, phrase: string) {
+function addCandidates(state: SearchState, peers: TgPeer[], niche: string, city: string | null, phrase: string) {
   for (const peer of peers) {
     const username = peer.username?.toLowerCase();
     if (!username || state.candidates.some((item) => item.username === username)) continue;
-    const verdict = judgeChannel(peer, niche);
+    const verdict = judgeChannel(peer, niche, city);
     if (!verdict.ok) continue;
     state.candidates.push({ username, title: peer.title, type: peer.type, members: peer.members ?? null, score: verdict.score, phrase });
   }
@@ -255,45 +256,42 @@ function aboutOf(peer: unknown): string | null {
   return null;
 }
 
-type Counters = { requests: number; reads: number };
-
 /** Досье канала → карточка (новая или дополненная существующая). null — канал не прошёл отбор. */
 async function saveChannel(
   search: { id: string; tenantId: string; niche: string; city: string | null },
   candidate: Candidate,
   history: TgHistory,
-  reader: MessengerReader,
-  counters: Counters,
 ) {
   const username = (history.chat?.username || candidate.username).toLowerCase();
-  const posts: TelegramPost[] = (history.messages ?? [])
-    .map((message) => ({
-      id: message.id,
-      date: message.date,
-      text: cleanText(message.text || "").slice(0, 1500),
-      link: message.link || tgLink(username, message.id),
-    }))
+  const read = (history.messages ?? [])
+    .map((message) => {
+      const extra = message as unknown as { entities?: { type?: string; url?: string }[]; forwardedFrom?: unknown };
+      return {
+        id: message.id,
+        date: message.date,
+        text: cleanText(message.text || "").slice(0, 1500),
+        link: message.link || tgLink(username, message.id),
+        media: message.media?.type ?? null,
+        forwarded: Boolean(extra.forwardedFrom),
+        urls: (extra.entities ?? []).map((entity) => entity.url).filter((url): url is string => typeof url === "string").slice(0, 10),
+      };
+    })
     .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
     .slice(0, POSTS_PER_CHANNEL);
-  let about = aboutOf(history.chat);
-  // Описание канала — главный источник контактов. Если парсер не отдал его с постами, спрашиваем отдельно (это тоже чтение).
-  if (about == null && counters.reads < TG_MAX_CHANNEL_READS) {
-    try {
-      about = aboutOf(await reader.resolve(username));
-      counters.reads += 1;
-    } catch (error) {
-      if (!(error instanceof ApiError)) throw error;
-    }
-  }
+  // В карточке храним минимум: без ссылок из разметки (они нужны только чтобы найти сайт и контакты).
+  const posts: TelegramPost[] = read.map(({ urls: _urls, ...post }) => post);
+  // Описание канала Parser API сейчас не отдаёт (ни с постами, ни в resolve); если начнёт — подхватим.
+  const about = aboutOf(history.chat);
   const content = judgeContent(about, posts);
   if (!content.ok) return null;
 
   const title = history.chat?.title || candidate.title;
   const members = history.chat?.members ?? candidate.members ?? null;
-  const contacts = channelContacts(about, posts, username);
+  const contacts = channelContacts(about, read, username);
   const dossier = channelDossier(posts);
   const city = search.city && mentionsCity(`${title}\n${about ?? ""}`, search.city) ? search.city : null;
-  const website = contacts.websites[0] ?? null;
+  // Сайт карточки — только «свой» (похож на ник/название); остальные ссылки остаются в досье.
+  const website = officialSite(contacts.websites, username, title);
   const telegram = {
     username,
     title,
@@ -308,7 +306,7 @@ async function saveChannel(
   };
   const extraContacts = [
     { type: "telegram", value: `@${username}`, label: history.chat?.type === "channel" ? "канал" : "группа" },
-    ...contacts.usernames.map((name) => ({ type: "telegram", value: `@${name}`, label: "из описания канала" })),
+    ...contacts.usernames.map((name) => ({ type: "telegram", value: `@${name}`, label: "упомянут в канале" })),
     ...contacts.phones.map((value) => ({ type: "phone", value, label: "из Telegram" })),
     ...contacts.emails.map((value) => ({ type: "email", value, label: "из Telegram" })),
   ];

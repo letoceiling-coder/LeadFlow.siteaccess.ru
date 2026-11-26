@@ -1,4 +1,5 @@
 import "server-only";
+import { domainToUnicode } from "node:url";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { dedupeKeys, nameProbe, phoneTail, type DedupeKeys, type DedupeMatch } from "../domain/dedupe";
@@ -31,7 +32,8 @@ export async function findDuplicate(tenantId: string, keys: DedupeKeys): Promise
   }
   for (const domain of keys.domains) {
     const rows = await prisma.organization.findMany({
-      where: { tenantId, isDemo: false, website: { contains: domain, mode: "insensitive" } },
+      // Сайт мог быть записан и как «фонд.рф», и как punycode — ищем обе формы, сверяем точно ниже.
+      where: { tenantId, isDemo: false, OR: [...new Set([domain, domainToUnicode(domain)])].filter(Boolean).map((form) => ({ website: { contains: form, mode: "insensitive" as const } })) },
       select: { id: true, website: true },
       take: 10,
     });

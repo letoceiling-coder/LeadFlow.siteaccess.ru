@@ -121,6 +121,10 @@ describe("поисковые фразы", () => {
   it("без города — ниша и синонимы", () => {
     expect(searchPhrases("музей")).toContain("краеведческий музей");
   });
+  it("местный канал выше федерального при заданном городе", () => {
+    const peer = (title: string) => ({ type: "channel", username: "x_museum", members: 5000, title });
+    expect(judgeChannel(peer("Музей соцбыта. Казань"), "музей", "Казань").score).toBeGreaterThan(judgeChannel(peer("Русский музей"), "музей", "Казань").score);
+  });
   it("город в тексте канала", () => {
     expect(mentionsCity("Музей истории Казани", "Казань")).toBe(true);
     expect(mentionsCity("Музей Москвы", "Казань")).toBe(false);
@@ -190,5 +194,32 @@ describe("тип контакта telegram", () => {
   it("«@username» с типом telegram — это Telegram, а не почта", () => {
     expect(contactKinds("telegram", "@fond_help")).toContain("telegram");
     expect(contactKinds("telegram", "@fond_help")).not.toContain("email");
+  });
+});
+
+describe("сайт организации среди ссылок канала", () => {
+  it("свой сайт по нику или названию, СМИ и спонсоры — нет", async () => {
+    const { officialSite } = await import("../src/lib/domain/telegram-facts");
+    expect(officialSite(["https://ria.ru", "https://aleshafond.ru"], "aleshafond_ru")).toBe("https://aleshafond.ru");
+    expect(officialSite(["https://zakatfund.ru"], "fundzakat")).toBe("https://zakatfund.ru");
+    expect(officialSite(["https://sofp.ru"], "sofp66")).toBe("https://sofp.ru");
+    expect(officialSite(["https://avzvet.ru", "https://ghopecatalog.ru"], "fondgh", "Дарящие надежду")).toBeNull();
+    expect(officialSite(["https://podsolnuh-fond.ru"], "fond_x", "Фонд Подсолнух")).toBe("https://podsolnuh-fond.ru");
+  });
+  it("кириллический домен целиком, поддомен → корень, платёжки и СМИ не сайт", async () => {
+    const officialSiteOf = (await import("../src/lib/domain/telegram-facts")).officialSite;
+    const result = extractContacts("Сайт: своихнебросаем2022.рф, оплата qr.nspk.ru/abc, ria.ru/news");
+    expect(result.websites).toEqual(["https://своихнебросаем2022.рф"]);
+    expect(officialSiteOf(result.websites, "svoih_ne_brosaem_rf")).toBe("https://своихнебросаем2022.рф");
+    expect(officialSiteOf(["https://ticket.rusmuseum.ru"], "rusmuseum")).toBe("https://rusmuseum.ru");
+  });
+  it("один пост с промокодом не делает фонд складчиной", () => {
+    const now = new Date("2026-11-27T12:00:00Z");
+    const posts = [
+      { date: "2026-11-26T10:00:00Z", text: "Промокод партнёра на корм" },
+      { date: "2026-11-25T10:00:00Z", text: "Сбор на лечение" },
+      { date: "2026-11-24T10:00:00Z", text: "Отчёт" },
+    ];
+    expect(judgeContent(null, posts, now).ok).toBe(true);
   });
 });

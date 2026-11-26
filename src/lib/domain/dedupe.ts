@@ -18,7 +18,7 @@ export type DedupeInput = {
 export type DedupeKeys = { domains: string[]; phones: string[]; usernames: string[]; nameCity: string | null };
 
 /** Домены, по которым совпадение ничего не значит (у тысяч организаций одинаковые). */
-const SHARED_DOMAINS = /(^|\.)(t\.me|telegram\.me|vk\.com|vk\.me|ok\.ru|instagram\.com|facebook\.com|youtube\.com|youtu\.be|wa\.me|max\.ru|taplink\.cc|linktr\.ee|tilda\.ws|ucoz\.ru|narod\.ru|wixsite\.com|business\.site|yandex\.ru|google\.com|2gis\.ru|zoon\.ru|avito\.ru|dobro\.ru|mos\.ru|gosuslugi\.ru|culture\.ru|tiu\.ru|blogspot\.com)$/i;
+const SHARED_DOMAINS = /(^|\.)(vk\.ru|vk\.link|rutube\.ru|dzen\.ru|nspk\.ru|timepad\.ru|t\.me|telegram\.me|vk\.com|vk\.me|ok\.ru|instagram\.com|facebook\.com|youtube\.com|youtu\.be|wa\.me|max\.ru|taplink\.cc|linktr\.ee|tilda\.ws|ucoz\.ru|narod\.ru|wixsite\.com|business\.site|yandex\.ru|google\.com|2gis\.ru|zoon\.ru|avito\.ru|dobro\.ru|mos\.ru|gosuslugi\.ru|culture\.ru|tiu\.ru|blogspot\.com)$/i;
 
 const LEGAL = /(?<![a-zа-я0-9])(ооо|оао|зао|пао|ао|ип|ано|нко|бф|бо|мбук|гбук|гаук|мбу|гбу|фгбук|фгбу|чу|нп|роо|мро|фонд поддержки|благотворительный фонд|фонд|благотворительная организация|автономная некоммерческая организация|музей|официальный канал|официальный)(?![a-zа-я0-9])/giu;
 
