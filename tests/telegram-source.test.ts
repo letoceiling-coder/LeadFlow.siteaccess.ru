@@ -34,7 +34,7 @@ describe("контакты из текста канала", () => {
     expect(result.emails).toEqual(["hello@museum.ru"]);
   });
   it("служебные ссылки Telegram не контакты", () => {
-    expect(extractContacts("t.me/joinchat/AAAA t.me/addstickers/x t.me/share/url").usernames).toEqual([]);
+    expect(extractContacts("t.me/joinchat/AAAA t.me/addstickers/x t.me/share/url @museum_feedback_bot").usernames).toEqual([]);
   });
   it("нормализация телефона и ника", () => {
     expect(normalizePhone("8 (812) 000-11-22")).toBe("+78120001122");
@@ -100,6 +100,9 @@ describe("отбор каналов, похожих на организации"
     expect(judgeChannel(peer("Анна", { type: "user" }), "фонд").ok).toBe(false);
     expect(judgeChannel(peer("Фонд", { members: 5 }), "фонд").ok).toBe(false);
     expect(judgeChannel(peer("Фонд", { username: null }), "фонд").ok).toBe(false);
+  });
+  it("афиши «куда сходить» — не организация", () => {
+    expect(judgeChannel(peer("Куда пойти в Казани // Афиша. Театры. Музеи"), "музей", "Казань").ok).toBe(false);
   });
   it("«Новости фонда» — не агрегатор", () => {
     expect(judgeChannel(peer("Новости фонда «Вера»"), "фонд").ok).toBe(true);

@@ -5,13 +5,14 @@ import { prisma } from "../db";
 import { ApiError, FatalJobError, RetryableError } from "../errors";
 import { enqueueJob } from "../jobs/queue";
 import { logEvent } from "../log";
-import { messengerReader, tgLink, type MessengerReader, type TgHistory, type TgPeer } from "../integrations/messengers";
+import { messengerReader, tgLink, type MessengerReader, type TgChannelInfo, type TgHistory, type TgPeer } from "../integrations/messengers";
 import { classifyWebsite } from "../domain/website";
 import { dedupeKeys, phoneTail } from "../domain/dedupe";
 import {
   channelContacts,
   channelDossier,
   cleanText,
+  extractContacts,
   judgeChannel,
   judgeContent,
   mentionsCity,
@@ -195,7 +196,7 @@ export async function runTelegramSearchStep(searchId: string, jobTenantId: strin
         counters.reads += 1;
         state.readIndex += 1;
         if (history) {
-          const saved = await saveChannel(search, candidate, history);
+          const saved = await saveChannel(search, candidate, history, reader, counters);
           if (saved) {
             counters.found += 1;
             if (saved.merged) counters.merged += 1;
@@ -261,6 +262,8 @@ async function saveChannel(
   search: { id: string; tenantId: string; niche: string; city: string | null },
   candidate: Candidate,
   history: TgHistory,
+  reader: MessengerReader,
+  counters: { reads: number },
 ) {
   const username = (history.chat?.username || candidate.username).toLowerCase();
   const read = (history.messages ?? [])
@@ -280,18 +283,29 @@ async function saveChannel(
     .slice(0, POSTS_PER_CHANNEL);
   // В карточке храним минимум: без ссылок из разметки (они нужны только чтобы найти сайт и контакты).
   const posts: TelegramPost[] = read.map(({ urls: _urls, ...post }) => post);
-  // Описание канала Parser API сейчас не отдаёт (ни с постами, ни в resolve); если начнёт — подхватим.
-  const about = aboutOf(history.chat);
-  const content = judgeContent(about, posts);
+  // Сначала посты (живой ли канал), и только для прошедших — описание: там контакт менеджера и сайт.
+  const content = judgeContent(aboutOf(history.chat), posts);
   if (!content.ok) return null;
+  let info: TgChannelInfo | null = null;
+  if (counters.reads < TG_MAX_CHANNEL_READS) {
+    try {
+      info = await reader.channelInfo(username);
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error;
+    }
+    counters.reads += 1;
+  }
+  const about = (info?.about || "").trim() || aboutOf(history.chat);
 
   const title = history.chat?.title || candidate.title;
-  const members = history.chat?.members ?? candidate.members ?? null;
+  const members = info?.members ?? history.chat?.members ?? candidate.members ?? null;
   const contacts = channelContacts(about, read, username);
   const dossier = channelDossier(posts);
   const city = search.city && mentionsCity(`${title}\n${about ?? ""}`, search.city) ? search.city : null;
   // Сайт карточки — только «свой» (похож на ник/название); остальные ссылки остаются в досье.
-  const website = officialSite(contacts.websites, username, title);
+  const fromAbout = extractContacts(about || "", username);
+  // Единственная ссылка в описании канала — тоже его сайт, даже если домен не похож на ник.
+  const website = officialSite(contacts.websites, username, title) ?? (fromAbout.websites.length === 1 ? fromAbout.websites[0] : null);
   const telegram = {
     username,
     title,
@@ -299,6 +313,8 @@ async function saveChannel(
     about,
     type: history.chat?.type ?? candidate.type,
     posts,
+    totalPosts: info?.posts ?? null,
+    channelCreatedAt: info?.createdAt ?? null,
     dossier,
     contacts,
     checkedAt: new Date().toISOString(),
@@ -306,7 +322,7 @@ async function saveChannel(
   };
   const extraContacts = [
     { type: "telegram", value: `@${username}`, label: history.chat?.type === "channel" ? "канал" : "группа" },
-    ...contacts.usernames.map((name) => ({ type: "telegram", value: `@${name}`, label: "упомянут в канале" })),
+    ...contacts.usernames.map((name) => ({ type: "telegram", value: `@${name}`, label: fromAbout.usernames.includes(name) ? "из описания канала" : "упомянут в постах" })),
     ...contacts.phones.map((value) => ({ type: "phone", value, label: "из Telegram" })),
     ...contacts.emails.map((value) => ({ type: "email", value, label: "из Telegram" })),
   ];

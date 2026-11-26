@@ -98,7 +98,8 @@ export function normalizePhone(value: string): string | null {
 
 export function normalizeUsername(value: string | null | undefined): string | null {
   const name = (value || "").trim().replace(/^https?:\/\/(t\.me|telegram\.me)\//i, "").replace(/^@/, "").split(/[/?#]/)[0].toLowerCase();
-  return /^[a-z][a-z0-9_]{3,31}$/.test(name) && !SERVICE_USERNAMES.has(name) ? name : null;
+  // Боты — не человек и не организация: написать им «первое сообщение» нельзя.
+  return /^[a-z][a-z0-9_]{3,31}$/.test(name) && !SERVICE_USERNAMES.has(name) && !/bot$/.test(name) ? name : null;
 }
 
 /** Домен сайта без www и протокола (для дедупликации и показа). */
@@ -270,7 +271,7 @@ export function channelDossier(posts: { date: string; text: string; media?: stri
 export type PeerLike = { type: string; title: string; username: string | null; members?: number | null; verified?: boolean };
 
 /** Слова в названии, по которым канал — не организация, а агрегатор, слив, барахолка и т. п. */
-const JUNK_TITLE = /(подборк|агрегатор|складчин|слив|халяв|скидк|промокод|купон|барахолк|объявлени|вакансии|работа в|подработ|знакомств|чат\s|флуд|мемы|юмор|приколы|ставки|прогноз|казино|крипт|заработ|инвест|сигнал|бот(?![а-яёa-z0-9])|bot\b|рейтинг|топ[\s-]?\d|база\s|отзывы о|black ?list|скам)/i;
+const JUNK_TITLE = /(куда (?:пойти|сходить)|что посмотреть|гид по|подборк|агрегатор|складчин|слив|халяв|скидк|промокод|купон|барахолк|объявлени|вакансии|работа в|подработ|знакомств|чат\s|флуд|мемы|юмор|приколы|ставки|прогноз|казино|крипт|заработ|инвест|сигнал|бот(?![а-яёa-z0-9])|bot\b|рейтинг|топ[\s-]?\d|база\s|отзывы о|black ?list|скам)/i;
 /** «Новости», «дайджест» — агрегатор, если в названии нет признаков организации («Новости фонда X» оставляем). */
 const SOFT_JUNK_TITLE = /(новост|news|дайджест|digest|каталог|афиша)/i;
 /** Слова, которые выдают организацию. */

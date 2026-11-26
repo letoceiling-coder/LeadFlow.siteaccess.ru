@@ -13,7 +13,7 @@ export async function findDuplicate(tenantId: string, keys: DedupeKeys): Promise
   for (const username of keys.usernames) {
     const own = await prisma.organization.findFirst({ where: { tenantId, source: "telegram", externalId: `tg:${username}` }, select: { id: true } });
     if (own) return { organizationId: own.id, match: { by: "telegram", value: username } };
-    const contact = await prisma.organizationContact.findFirst({
+    const contacts = await prisma.organizationContact.findMany({
       where: {
         tenantId,
         organization: { isDemo: false },
@@ -24,11 +24,12 @@ export async function findDuplicate(tenantId: string, keys: DedupeKeys): Promise
         ],
       },
       select: { organizationId: true, value: true },
+      take: 20,
     });
     // «t.me/fond» не должен совпасть с «t.me/fond_help»: проверяем ник целиком.
-    if (contact && new RegExp(`(^@|/)${username}(?![a-z0-9_])`, "i").test(contact.value)) {
-      return { organizationId: contact.organizationId, match: { by: "telegram", value: username } };
-    }
+    const exact = new RegExp(`(^@|/)${username}(?![a-z0-9_])`, "i");
+    const contact = contacts.find((item) => exact.test(item.value));
+    if (contact) return { organizationId: contact.organizationId, match: { by: "telegram", value: username } };
   }
   for (const domain of keys.domains) {
     const rows = await prisma.organization.findMany({
