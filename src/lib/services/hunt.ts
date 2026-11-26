@@ -83,7 +83,7 @@ async function hasLiveQualifyJob(tenantId: string, organizationId: string) {
   return Boolean(job);
 }
 
-export async function enqueueQualify(tenantId: string, actorId: string | null, organizationIds: string[], confirmLarge = false) {
+export async function enqueueQualify(tenantId: string, actorId: string | null, organizationIds: string[], confirmLarge = false, options: { siteScan?: boolean } = {}) {
   const settings = await getSettings(tenantId);
   const ids = [...new Set(organizationIds)];
   if (ids.length > 10 && settings.confirm.expensiveAi && !confirmLarge) {
@@ -105,7 +105,7 @@ export async function enqueueQualify(tenantId: string, actorId: string | null, o
       update: { cardStatus: "queued", error: null },
       create: { tenantId, organizationId: org.id, cardStatus: "queued", segment: detectSegment(org.category, org.categories) },
     });
-    await enqueueJob({ tenantId, type: "hunt.qualify", payload: { organizationId: org.id }, idempotencyKey: `qualify:${org.id}:${Date.now()}` });
+    await enqueueJob({ tenantId, type: "hunt.qualify", payload: { organizationId: org.id, ...(options.siteScan === false ? { siteScan: false } : {}) }, idempotencyKey: `qualify:${org.id}:${Date.now()}` });
     queued += 1;
   }
   if (actorId) await audit({ tenantId, actorId, action: "hunt.qualify", meta: { queued, skipped } });
@@ -133,7 +133,7 @@ export async function qualifyPending(tenantId: string, actorId: string | null, l
 }
 
 /** После поиска: все увиденные карточки без квалификации (не только созданные в этой попытке синхронизации). */
-export async function autoQualifyNew(tenantId: string, organizationIds: string[], options: { explicit?: boolean; max?: number } = {}) {
+export async function autoQualifyNew(tenantId: string, organizationIds: string[], options: { explicit?: boolean; max?: number; siteScan?: boolean } = {}) {
   if (!organizationIds.length) return;
   const settings = await getSettings(tenantId);
   if (!settings.hunt.autoQualify || settings.hunt.autoQualifyMax <= 0) return;
@@ -153,10 +153,10 @@ export async function autoQualifyNew(tenantId: string, organizationIds: string[]
     })
     .slice(0, limit)
     .map((item) => item.id);
-  if (ids.length) await enqueueQualify(tenantId, null, ids, true);
+  if (ids.length) await enqueueQualify(tenantId, null, ids, true, { siteScan: options.siteScan });
 }
 
-export async function runQualify(organizationId: string, jobTenantId?: string) {
+export async function runQualify(organizationId: string, jobTenantId?: string, options: { siteScan?: boolean } = {}) {
   const org = await prisma.organization.findUnique({ where: { id: organizationId }, include: { contacts: true } });
   if (!org || (jobTenantId && org.tenantId !== jobTenantId)) return;
   const tenantId = org.tenantId;
@@ -164,7 +164,8 @@ export async function runQualify(organizationId: string, jobTenantId?: string) {
   if (existing && !OPEN.includes(existing.status)) return;
   const settings = await getSettings(tenantId);
   // Сначала открываем сайт: реальные контакты (почта, мессенджеры) и проверяемые признаки хаоса.
-  try {
+  // S4: источник «Сайты» можно выключить при запуске поиска — тогда сайт не открываем.
+  if (options.siteScan !== false) try {
     await scanSite(org);
   } catch (error) {
     logEvent("site.scan.error", { organizationId, error: error instanceof Error ? error.message : String(error) }, "warn");

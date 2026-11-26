@@ -7,6 +7,7 @@ import { collectStatusOf, mapParserOrganization } from "../domain/parser-map";
 import { ParserClient, asTask } from "../integrations/parser";
 import { requireReady } from "../integrations/config";
 import { enqueueJob } from "../jobs/queue";
+import { isWaiting, pickNext, queueInfo, sourcesOf } from "../domain/search-queue";
 import { audit, notify } from "./common";
 import { upsertMapped } from "./organizations";
 import type { z } from "zod";
@@ -25,7 +26,8 @@ export async function createSearch(tenantId: string, userId: string, input: Sear
   if (needsLargeConfirm(input.maxResults) && !input.confirmLarge) {
     throw new ApiError(409, "Поиск больше 200 организаций нужно подтвердить ещё раз.", "confirm_required");
   }
-  const integration = await requireReady(tenantId, "parser", "Поиск организаций");
+  // Без настроенного парсера поиск даже не встаёт в очередь.
+  await requireReady(tenantId, "parser", "Поиск организаций");
   // Массовый сбор (organizations/collect): все поля карточки — мессенджеры, прайс, отзывы, ИНН — и до 500 карточек за раз.
   const keyBase = ["collect", normalize(input.city), normalize(input.category), normalize(input.searchQuery), input.maxResults, input.includePhotos].join(":");
   if (!input.force) {
@@ -52,19 +54,98 @@ export async function createSearch(tenantId: string, userId: string, input: Sear
       createdById: userId,
     },
   });
-  try {
-    await submitParserTask(task.id, integration);
-  } catch (error) {
-    if (error instanceof RetryableError) {
-      await enqueueJob({ tenantId, type: "parser.submit", payload: { parserTaskId: task.id }, delayMs: error.delayMs, idempotencyKey: `submit:${task.id}` });
-      return { task, duplicate: false, delayed: true };
-    }
-    await prisma.parserTask.update({ where: { id: task.id }, data: { status: "failed", error: publicErrorMessage(error) } });
-    throw error;
-  }
-  await enqueueJob({ tenantId, type: "parser.poll", payload: { parserTaskId: task.id }, idempotencyKey: `poll:${task.id}` });
   await audit({ tenantId, actorId: userId, action: "parser.search", entityType: "parser_task", entityId: task.id, meta: { city: input.city, category: input.category } });
-  return { task: await prisma.parserTask.findUniqueOrThrow({ where: { id: task.id } }), duplicate: false };
+  // Парсер тянет один сбор за раз: поиск встаёт в очередь LeadFlow и уходит в парсер, когда место свободно.
+  // Страховка: задача-«часы» раз в 20 с проверяет очередь, даже если событие завершения предыдущего сбора потерялось.
+  await enqueueJob({ tenantId, type: "parser.queue", payload: { parserTaskId: task.id }, delayMs: 20_000, idempotencyKey: `queue:${task.id}`, maxAttempts: 50 });
+  await pumpSearchQueue(tenantId);
+  const fresh = await prisma.parserTask.findUniqueOrThrow({ where: { id: task.id } });
+  if (fresh.status === "failed") throw new ApiError(502, fresh.error || "Парсер не принял поиск.", "parser_failed");
+  const info = queueInfo(await openCollects(tenantId)).get(task.id);
+  return { task: fresh, duplicate: false, queued: Boolean(info && info.state === "waiting"), position: info?.position ?? null };
+}
+
+function openCollects(tenantId: string, client: Prisma.TransactionClient | typeof prisma = prisma) {
+  return client.parserTask.findMany({
+    where: { tenantId, type: "organizations.collect", status: { in: ["queued", "running"] } },
+    select: { id: true, type: true, status: true, externalId: true, dispatchedAt: true, createdAt: true, input: true },
+  });
+}
+
+/**
+ * Отдаёт парсеру следующий сбор из очереди, если место свободно. Безопасно вызывать откуда угодно и сколько угодно раз:
+ * место занимается под блокировкой базы, поэтому два параллельных вызова не отправят два сбора и не получат 429.
+ */
+export async function pumpSearchQueue(tenantId: string) {
+  for (let round = 0; round < 10; round += 1) {
+    const claimed = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`search-queue:${tenantId}`}))`;
+      const next = pickNext(await openCollects(tenantId, tx));
+      if (!next) return null;
+      await tx.parserTask.update({ where: { id: next.id }, data: { dispatchedAt: new Date() } });
+      return next.id;
+    });
+    if (!claimed) return null;
+    try {
+      const sent = await submitParserTask(claimed);
+      await enqueueJob({ tenantId, type: "parser.poll", payload: { parserTaskId: sent.id }, idempotencyKey: `poll:${sent.id}` });
+      return claimed;
+    } catch (error) {
+      if (error instanceof RetryableError) {
+        // Парсер занят (429) или недоступен: место остаётся за этим сбором, повторная отправка — отдельной задачей.
+        await enqueueJob({ tenantId, type: "parser.submit", payload: { parserTaskId: claimed }, delayMs: error.delayMs, idempotencyKey: `submit:${claimed}` });
+        return claimed;
+      }
+      // Окончательная ошибка — сбор помечен, место свободно, пробуем следующего в очереди.
+      await prisma.parserTask.updateMany({ where: { id: claimed, status: { in: ["queued", "running"] } }, data: { status: "failed", error: publicErrorMessage(error), completedAt: new Date() } });
+      safeLog("parser.queue.submit", error);
+    }
+  }
+  return null;
+}
+
+/** Мягкий вызов очереди для мест, где сбой очереди не должен ломать основное действие. */
+export async function kickSearchQueue(tenantId: string) {
+  try {
+    await pumpSearchQueue(tenantId);
+  } catch (error) {
+    safeLog("parser.queue", error);
+  }
+}
+
+/** Длиннее суток в очереди LeadFlow не ждём: что-то сломалось, пусть человек решит сам. */
+const WAIT_LIMIT_MS = 24 * 60 * 60 * 1000;
+
+/** Задача-«часы» одного поиска: пока он ждёт очереди, раз в 20 с толкает очередь. */
+export async function tickSearchQueue(taskId: string) {
+  const task = await prisma.parserTask.findUnique({ where: { id: taskId } });
+  if (!task || !isWaiting(task)) return { done: true };
+  if (Date.now() - task.createdAt.getTime() > WAIT_LIMIT_MS) {
+    await prisma.parserTask.updateMany({ where: { id: task.id, status: "queued", dispatchedAt: null }, data: { status: "failed", error: "Поиск сутки ждал очереди парсера — запустите его снова.", completedAt: new Date() } });
+    return { done: true };
+  }
+  await pumpSearchQueue(task.tenantId);
+  const fresh = await prisma.parserTask.findUnique({ where: { id: taskId } });
+  return { done: !fresh || !isWaiting(fresh) };
+}
+
+/** Очередь и история поисков для экрана: строки поиска + место в очереди и источники. */
+export async function searchQueue(tenantId: string, limit = 20) {
+  const { searches } = await import("./hunt");
+  const rows = await searches(tenantId, limit);
+  const info = queueInfo(await openCollects(tenantId));
+  const inputs = await prisma.parserTask.findMany({ where: { tenantId, id: { in: rows.map((row) => row.id) } }, select: { id: true, input: true } });
+  const sources = new Map(inputs.map((row) => [row.id, sourcesOf(row.input)]));
+  return rows.map((row) => ({ ...row, queue: info.get(row.id) ?? null, sources: sources.get(row.id) ?? ["maps", "sites"] }));
+}
+
+/** Убрать поиск из очереди: ждущий или идущий сначала отменяется, потом запись удаляется. Карточки остаются в базе. */
+export async function removeFromQueue(tenantId: string, id: string, actorId: string) {
+  const task = await prisma.parserTask.findFirst({ where: { id, tenantId }, select: { status: true } });
+  if (!task) throw new ApiError(404, "Поиск не найден", "not_found");
+  if (["queued", "running"].includes(task.status)) await cancelSearch(tenantId, id, actorId);
+  await prisma.parserTask.deleteMany({ where: { id, tenantId } });
+  return { ok: true };
 }
 
 export async function submitParserTask(taskId: string, ready?: Awaited<ReturnType<typeof requireReady>>) {
@@ -277,7 +358,9 @@ export async function syncTaskOrganizations(taskId: string) {
     const { autoQualifyNew } = await import("./hunt");
     const input = task.input as { maxResults?: number; need?: number };
     const requested = Number(input.maxResults ?? input.need ?? 0);
-    await autoQualifyNew(task.tenantId, [...seen], { explicit: task.type === "organizations.collect", max: requested || seen.size });
+    // Источник «Сайты» выключен — карточки оцениваются по данным карт, сайты не открываем (быстрее).
+    const siteScan = sourcesOf(task.input).includes("sites");
+    await autoQualifyNew(task.tenantId, [...seen], { explicit: task.type === "organizations.collect", max: requested || seen.size, ...(siteScan ? {} : { siteScan: false }) });
   } catch (error) {
     safeLog("hunt.autoQualify", error);
   }
@@ -304,6 +387,8 @@ export async function cancelSearch(tenantId: string, id: string, actorId: string
   }
   const updated = await prisma.parserTask.update({ where: { id }, data: { status: "cancelled", completedAt: new Date() } });
   await audit({ tenantId, actorId, action: "parser.cancel", entityType: "parser_task", entityId: id });
+  // Место в парсере освободилось — следующий в очереди уходит сразу.
+  await kickSearchQueue(tenantId);
   return updated;
 }
 

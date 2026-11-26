@@ -265,10 +265,13 @@ model ParserTask {
   completedAt       DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  /// S4: когда LeadFlow отдал сбор парсеру из своей очереди (парсер тянет один сбор за раз).
+  dispatchedAt      DateTime?
   events            ParserTaskEvent[]
 
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId, status, createdAt])
+  @@index([tenantId, type, status])
   @@index([externalId])
 }
 

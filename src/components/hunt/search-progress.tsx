@@ -29,7 +29,17 @@ export type SearchRow = {
   collected?: number | null;
   imported?: number | null;
   funnel: SearchFunnel | null;
+  /** S4: место в очереди поисков (только у /api/hunt/queue). */
+  queue?: { position: number | null; state: "waiting" | "sending" | "collecting" | "retrying" | "done"; attempt: number; label: string | null } | null;
+  sources?: string[];
 };
+
+/** Скоринг, который не сдвинулся за 30 минут после сохранения, считаем остановившимся: экран перестаёт опрашивать сервер. */
+export const SCORING_STALE_MS = 30 * 60 * 1000;
+
+function scoringStale(row: SearchRow, now = Date.now()) {
+  return Boolean(row.syncedAt && now - new Date(row.syncedAt).getTime() > SCORING_STALE_MS);
+}
 
 export type SearchResult = { id: string; priority: string; score: number; cardStatus: string; status: string; name: string; city: string | null; rating: number | null; reviewCount: number | null; website: string | null };
 export type SearchDetail = SearchRow & { items: SearchResult[] };
@@ -41,7 +51,7 @@ export function phaseOf(row: SearchRow): { index: number; failed: boolean } {
   if (["failed", "cancelled"].includes(row.status)) return { index: row.syncedAt ? 2 : row.status === "failed" && row.startedAt ? 1 : 0, failed: true };
   if (row.status === "queued") return { index: 0, failed: false };
   if (row.status === "running") return { index: 1, failed: false };
-  if (!row.syncedAt || row.funnel?.queued) return { index: 2, failed: false };
+  if (!row.syncedAt || (row.funnel?.queued && !scoringStale(row))) return { index: 2, failed: false };
   return { index: 3, failed: false };
 }
 
@@ -79,6 +89,7 @@ export const STATUS_TEXT: Record<string, string> = { queued: "в очереди"
 export function statusText(row: SearchRow) {
   const { index, failed } = phaseOf(row);
   if (failed) return STATUS_TEXT[row.status] ?? row.status;
+  if (index < 2 && row.queue?.label) return row.queue.label;
   if (index === 2) return row.syncedAt ? "скоринг" : "сохраняем";
   return STATUS_TEXT[row.status] ?? row.status;
 }
@@ -148,8 +159,11 @@ export function etaText(seconds: number | null | undefined) {
 /** Плашка «идёт поиск» для любого экрана: видно, что парсер работает, и одно касание до хода поиска. */
 export function LiveSearches() {
   const { version } = useHunt();
-  const list = useLive<SearchRow[]>("/api/hunt/searches?limit=5", version, 5000);
+  const [poll, setPoll] = useState<number | false>(false);
+  const list = useLive<SearchRow[]>("/api/hunt/queue?limit=5", version, poll);
   const active = (list.data ?? []).filter(isLive);
+  // Опрос — только пока идёт поиск: на пустом экране «Сегодня» сервер не дёргаем.
+  useEffect(() => { setPoll(active.length ? 5000 : false); }, [active.length]);
   if (!active.length) return null;
   return (
     <div className="space-y-2">
