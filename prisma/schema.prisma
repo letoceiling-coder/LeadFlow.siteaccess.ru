@@ -965,3 +965,27 @@ model Project {
   @@index([tenantId, stage, updatedAt])
   @@index([tenantId, createdAt])
 }
+
+/// S2: поиск Telegram-каналов организаций по нише (фоном, задача telegram.search). Только чтение Telegram.
+model TelegramSearch {
+  id         String    @id @default(cuid())
+  tenantId   String
+  createdBy  String?
+  niche      String
+  city       String?
+  limit      Int       @default(20)
+  status     String    @default("queued")
+  phrases    String[]  @default([])
+  state      Json?
+  found      Int       @default(0)
+  created    Int       @default(0)
+  merged     Int       @default(0)
+  requests   Int       @default(0)
+  reads      Int       @default(0)
+  error      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  finishedAt DateTime?
+
+  @@index([tenantId, createdAt])
+}
