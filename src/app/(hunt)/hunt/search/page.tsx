@@ -5,7 +5,7 @@ import { Bookmark, Check, ChevronDown, Globe, MapPin, Play, RotateCcw, Send, Spa
 import { ApiClientError } from "@/lib/client";
 import { useHunt } from "@/components/hunt/shell";
 import { post, useLive } from "@/components/hunt/data";
-import { Button, Chip, Glass, Notice, cx, errorText, inputClass, useToast } from "@/components/hunt/ui";
+import { Button, Chip, Glass, Notice, PageHeader, cx, errorText, inputClass, useToast } from "@/components/hunt/ui";
 import { BestQueries } from "@/components/hunt/insights";
 import { isLive, type SearchRow } from "@/components/hunt/search-progress";
 import { MapsQueueRow, TelegramQueueRow, useTelegramSearches } from "@/components/hunt/search-queue";
@@ -232,13 +232,13 @@ export default function HuntSearchPage() {
   const liveCount = activeMaps.length + tg.live;
 
   return (
-    <div className="pt-2">
-      <h1 className="text-[28px] font-semibold leading-[34px] tracking-tight md:text-[32px] md:leading-[38px]">Найти клиентов</h1>
-      <p className="mt-1 max-w-2xl text-[15px] text-[var(--h-muted)]">Ниша → город → «Искать». Ниши можно ставить подряд: парсер берёт по одной, остальные ждут в очереди.</p>
+    <div>
+      <PageHeader title="Поиск" subtitle="ниша → город → «Искать» · шаг 1 из 4" />
+      <p className="mt-1 max-w-2xl px-0.5 text-[14px] text-[var(--h-muted)]">Ниши можно ставить подряд: парсер берёт по одной, остальные ждут в очереди справа.</p>
 
       {/* Телефон: очередь ниже формы — короткая ссылка на неё сверху, чтобы видеть ход без прокрутки. */}
       {liveCount ? (
-        <button type="button" onClick={() => queueRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })} className="mt-3 flex h-11 w-full items-center gap-2 rounded-2xl bg-[rgba(255,214,10,0.1)] px-4 text-left text-sm lg:hidden">
+        <button type="button" onClick={() => queueRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })} className="mt-3 flex h-11 w-full items-center gap-2 rounded-2xl bg-[rgba(242,220,107,0.1)] px-4 text-left text-sm lg:hidden">
           <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[var(--h-accent)]" />
           <span className="min-w-0 flex-1 truncate">Очередь: идёт {liveCount - waiting}{waiting ? ` · ждут ${waiting}` : ""}</span>
           <span className="shrink-0 font-semibold text-[var(--h-accent)]">Смотреть ↓</span>
@@ -283,7 +283,7 @@ export default function HuntSearchPage() {
                   const on = sources.includes(item.key);
                   const Icon = item.icon;
                   return (
-                    <button key={item.key} type="button" aria-pressed={on} onClick={() => toggleSource(item.key)} className={cx("relative flex min-h-[60px] flex-col items-start justify-center rounded-2xl border px-3 py-2 text-left transition", on ? "border-[var(--h-accent)] bg-[rgba(255,214,10,0.1)]" : "border-[var(--h-line)] bg-white/[0.03] hover:bg-white/[0.06]")}>
+                    <button key={item.key} type="button" aria-pressed={on} onClick={() => toggleSource(item.key)} className={cx("relative flex min-h-[60px] flex-col items-start justify-center rounded-2xl border px-3 py-2 text-left transition", on ? "border-[var(--h-accent)] bg-[rgba(242,220,107,0.1)]" : "border-[var(--h-line)] bg-white/[0.03] hover:bg-white/[0.06]")}>
                       <span className="flex min-w-0 items-center gap-1 text-[14px] font-semibold sm:gap-1.5 sm:text-[15px]"><Icon className={cx("h-4 w-4 shrink-0", on ? "text-[var(--h-accent)]" : "text-[var(--h-faint)]")} /><span className="truncate">{item.title}</span></span>
                       <span className={cx("mt-0.5 flex items-center gap-1 text-[11px] leading-tight", on ? "text-[var(--h-accent)]" : "text-[var(--h-faint)]")}>{on ? <Check className="h-3 w-3 shrink-0" strokeWidth={3} /> : null}{item.hint}</span>
                     </button>

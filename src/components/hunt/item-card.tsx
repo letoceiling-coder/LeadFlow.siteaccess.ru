@@ -12,13 +12,13 @@ export function ItemCard({ item, onOpen, meta, actions }: { item: HuntItem; onOp
   const hook = (item.hook && item.hook !== "NOT_FOUND" ? item.hook : null) ?? hookOf(item.card) ?? item.card?.chaos[0]?.text ?? item.organization.category;
   const tone = item.segment ? SEGMENT_TONE[item.segment] : null;
   return (
-    <div className={cx("glass flex items-stretch rounded-[24px] transition hover:bg-white/[0.07]", tint)}>
+    <div className={cx("glass flex items-stretch rounded-[var(--h-radius)] transition hover:bg-white/[0.08]", tint)}>
       <button onClick={onOpen} className="min-w-0 flex-1 px-4 py-3.5 text-left">
         <div className="flex items-center gap-2">
-          <span className="line-clamp-2 text-[17px] font-semibold leading-6">{item.organization.name}</span>
+          <span className="line-clamp-2 text-[16px] font-semibold leading-6">{item.organization.name}</span>
         </div>
-        {hook ? <p className="mt-0.5 line-clamp-2 text-[15px] leading-[21px] text-[var(--h-muted)]">{hook}</p> : null}
-        {item.card?.money[0] ? <p className="mt-1 truncate text-[13px] text-[#8ff0bd]">₽ {item.card.money[0].text}</p> : null}
+        {hook ? <p className="mt-0.5 line-clamp-2 text-[14px] leading-5 text-[var(--h-muted)]">{hook}</p> : null}
+        {item.card?.money[0] ? <p className="mt-1 truncate text-[13px] text-[var(--h-ok)]">₽ {item.card.money[0].text}</p> : null}
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[var(--h-faint)]">
           {meta ?? (
             <>

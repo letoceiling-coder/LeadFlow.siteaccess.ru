@@ -43,7 +43,7 @@ export default async function ProposalPage({ params }: Props) {
   const num = () => String(++n).padStart(2, "0");
 
   return (
-    <main className="min-h-dvh bg-[#0b0b0d] text-[#f4f4f5]">
+    <main className="min-h-dvh bg-[#0c1216] text-[#f4f4f5]">
       <style>{`.kp-slide{padding:48px 0;border-top:1px solid rgba(255,255,255,.08)} @media print{.kp-slide{break-inside:avoid;padding:24px 0} .no-print{display:none}}`}</style>
       <div className="mx-auto max-w-3xl px-4 sm:px-6">
         <header className="pb-12 pt-14 sm:pt-20">

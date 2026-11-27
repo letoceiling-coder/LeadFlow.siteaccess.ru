@@ -10,8 +10,8 @@ export function GET(request: Request) {
   const inner = maskable ? size * 0.62 : size;
   return new ImageResponse(
     (
-      <div style={{ width: size, height: size, display: "flex", alignItems: "center", justifyContent: "center", background: "#0b0b0d" }}>
-        <div style={{ width: inner, height: inner, display: "flex", alignItems: "center", justifyContent: "center", color: "#ffd60a", fontSize: inner * 0.42, fontWeight: 700, letterSpacing: -inner * 0.02 }}>LF</div>
+      <div style={{ width: size, height: size, display: "flex", alignItems: "center", justifyContent: "center", background: "#0c1216" }}>
+        <div style={{ width: inner, height: inner, display: "flex", alignItems: "center", justifyContent: "center", color: "#f2dc6b", fontSize: inner * 0.42, fontWeight: 700, letterSpacing: -inner * 0.02 }}>LF</div>
       </div>
     ),
     { width: size, height: size, headers: { "Cache-Control": "public, max-age=604800, immutable" } },

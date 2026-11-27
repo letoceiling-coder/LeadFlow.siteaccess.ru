@@ -29,62 +29,75 @@ a { color: inherit; }
   * { animation: none !important; transition: none !important; }
 }
 
-/* ───────────── Охота: тёмная тема со стеклом ─────────────
-   Основа графит, тёплое свечение, один акцент — кислотно-жёлтый для главного действия.
-   Смысловые цвета отдельно: зелёный — деньги/готово, оранжевый — хаос/внимание, красный — ошибка. */
+/* ───────────── Охота: «вечернее небо» со стеклом ─────────────
+   Основа — глубокий сине-графитовый, сверху холодная дымка, снизу тёплое облачное свечение.
+   Акцент один — мягкий лимонный для главного действия. Смысловые цвета приглушены, чтобы не резали глаз:
+   зелёный — деньги/готово, оранжевый — внимание, красный — ошибка. */
 .hunt {
-  --h-bg: #0b0b0d;
-  --h-text: #f6f5f0;
-  --h-muted: rgba(246, 245, 240, 0.64);
-  --h-faint: rgba(246, 245, 240, 0.42);
-  --h-glass: rgba(255, 255, 255, 0.055);
-  --h-glass-strong: rgba(255, 255, 255, 0.09);
-  --h-line: rgba(255, 255, 255, 0.1);
-  --h-line-strong: rgba(255, 255, 255, 0.18);
-  --h-sheet: rgba(20, 20, 24, 0.86);
-  --h-accent: #ffd60a;
-  --h-accent-ink: #141204;
-  --h-hot: #ff6b2c;
-  --h-ok: #3be08a;
-  --h-danger: #ff6464;
-  --h-info: #8ab8ff;
+  --h-bg: #0c1216;
+  --h-text: #f3f2ec;
+  --h-muted: rgba(243, 242, 236, 0.66);
+  --h-faint: rgba(243, 242, 236, 0.44);
+  --h-glass: rgba(255, 255, 255, 0.06);
+  --h-glass-strong: rgba(255, 255, 255, 0.095);
+  --h-line: rgba(255, 255, 255, 0.11);
+  --h-line-strong: rgba(255, 255, 255, 0.2);
+  --h-sheet: rgba(18, 24, 29, 0.84);
+  --h-panel: rgba(16, 22, 27, 0.62);
+  --h-accent: #f2dc6b;
+  --h-accent-soft: rgba(242, 220, 107, 0.16);
+  --h-accent-ink: #1a1704;
+  --h-hot: #ff9157;
+  --h-ok: #74e0a8;
+  --h-danger: #ff7b7b;
+  --h-info: #9cc3ff;
+  --h-radius: 22px;
   color-scheme: dark;
   background: var(--h-bg);
   color: var(--h-text);
 }
 .hunt-glow {
   background:
-    radial-gradient(60% 45% at 85% -5%, rgba(255, 107, 44, 0.32), transparent 70%),
-    radial-gradient(45% 35% at 0% 30%, rgba(255, 214, 10, 0.1), transparent 70%),
-    radial-gradient(60% 40% at 50% 110%, rgba(255, 90, 31, 0.14), transparent 70%),
-    var(--h-bg);
+    radial-gradient(70% 50% at 12% -8%, rgba(110, 160, 170, 0.30), transparent 70%),
+    radial-gradient(55% 45% at 92% 0%, rgba(96, 112, 160, 0.26), transparent 72%),
+    radial-gradient(80% 45% at 70% 108%, rgba(222, 150, 88, 0.26), transparent 70%),
+    radial-gradient(50% 35% at 5% 100%, rgba(240, 190, 120, 0.14), transparent 70%),
+    linear-gradient(180deg, #121b20 0%, #0c1216 55%, #110f0e 100%);
+  background-attachment: fixed;
 }
 .glass {
   background: var(--h-glass);
   border: 1px solid var(--h-line);
-  -webkit-backdrop-filter: blur(20px) saturate(140%);
-  backdrop-filter: blur(20px) saturate(140%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  backdrop-filter: blur(22px) saturate(150%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 6px 24px rgba(0, 0, 0, 0.16);
 }
 .glass-strong {
   background: var(--h-glass-strong);
   border: 1px solid var(--h-line-strong);
-  -webkit-backdrop-filter: blur(24px) saturate(150%);
-  backdrop-filter: blur(24px) saturate(150%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 12px 40px rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(26px) saturate(160%);
+  backdrop-filter: blur(26px) saturate(160%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 14px 44px rgba(0, 0, 0, 0.32);
+}
+.glass-panel {
+  background: var(--h-panel);
+  border: 1px solid var(--h-line);
+  -webkit-backdrop-filter: blur(30px) saturate(160%);
+  backdrop-filter: blur(30px) saturate(160%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 18px 50px rgba(0, 0, 0, 0.3);
 }
 .glass-sheet {
   background: var(--h-sheet);
   border: 1px solid var(--h-line);
-  -webkit-backdrop-filter: blur(28px) saturate(150%);
-  backdrop-filter: blur(28px) saturate(150%);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: blur(30px) saturate(160%);
+  backdrop-filter: blur(30px) saturate(160%);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
 }
-.tint-yellow { background: rgba(255, 214, 10, 0.1); border-color: rgba(255, 214, 10, 0.26); }
-.tint-orange { background: rgba(255, 107, 44, 0.11); border-color: rgba(255, 107, 44, 0.28); }
+.tint-yellow { background: rgba(242, 220, 107, 0.1); border-color: rgba(242, 220, 107, 0.28); }
+.tint-orange { background: rgba(255, 145, 87, 0.1); border-color: rgba(255, 145, 87, 0.28); }
 .tint-pink { background: rgba(255, 99, 177, 0.1); border-color: rgba(255, 99, 177, 0.26); }
 .tint-blue { background: rgba(138, 184, 255, 0.1); border-color: rgba(138, 184, 255, 0.26); }
-.tint-green { background: rgba(59, 224, 138, 0.09); border-color: rgba(59, 224, 138, 0.24); }
+.tint-green { background: rgba(116, 224, 168, 0.09); border-color: rgba(116, 224, 168, 0.26); }
 .tint-violet { background: rgba(176, 140, 255, 0.11); border-color: rgba(176, 140, 255, 0.28); }
 .hunt input, .hunt textarea, .hunt select { color: var(--h-text); }
 .hunt ::placeholder { color: var(--h-faint); }
@@ -122,14 +135,14 @@ a { color: inherit; }
 .lf-dark .text-slate-400 { color: var(--h-faint); }
 .lf-dark .text-teal-800 { color: var(--h-accent); }
 .lf-dark .bg-teal-700 { background: var(--h-accent); color: var(--h-accent-ink); }
-.lf-dark .hover\:bg-teal-800:hover { background: #ffe14d; }
-.lf-dark .bg-teal-50 { background: rgba(255, 214, 10, 0.12); color: var(--h-accent); }
+.lf-dark .hover\:bg-teal-800:hover { background: #f7e58a; }
+.lf-dark .bg-teal-50 { background: var(--h-accent-soft); color: var(--h-accent); }
 .lf-dark .border-teal-700 { border-color: var(--h-accent); }
-.lf-dark .ring-teal-700\/30 { --tw-ring-color: rgba(255, 214, 10, 0.35); }
+.lf-dark .ring-teal-700\/30 { --tw-ring-color: rgba(242, 220, 107, 0.35); }
 .lf-dark .text-red-700, .lf-dark .text-red-800 { color: #ff9b9b; }
 .lf-dark .bg-red-50 { background: rgba(255, 100, 100, 0.12); }
-.lf-dark .bg-amber-50 { background: rgba(255, 107, 44, 0.11); }
-.lf-dark .border-amber-200 { border-color: rgba(255, 107, 44, 0.3); }
+.lf-dark .bg-amber-50 { background: rgba(255, 145, 87, 0.11); }
+.lf-dark .border-amber-200 { border-color: rgba(255, 145, 87, 0.3); }
 .lf-dark .text-amber-800, .lf-dark .text-amber-900 { color: #ffc3a6; }
 .lf-dark .bg-emerald-50 { background: rgba(59, 224, 138, 0.1); }
 .lf-dark .text-emerald-800 { color: #8ff0bd; }
@@ -139,7 +152,7 @@ a { color: inherit; }
   border-color: var(--h-line);
 }
 .lf-dark input:focus, .lf-dark select:focus, .lf-dark textarea:focus { border-color: var(--h-accent); }
-.lf-dark select option { background: #17171b; color: var(--h-text); }
+.lf-dark select option { background: #141b20; color: var(--h-text); }
 .lf-dark ::placeholder { color: var(--h-faint); }
 .lf-dark thead { color: var(--h-faint); }
 .lf-dark table tr { border-color: var(--h-line); }
@@ -166,3 +179,13 @@ a { color: inherit; }
 @keyframes pop-in { 0% { transform: scale(0.96); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
 .anim-pop { animation: pop-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 @media (prefers-reduced-motion: reduce) { .progress-live, .anim-pop { animation: none; } }
+
+/* Тонкий скроллбар в тон стеклу (ПК). */
+.hunt ::-webkit-scrollbar { width: 10px; height: 10px; }
+.hunt ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
+.hunt ::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, 0.22); }
+.hunt ::-webkit-scrollbar-track { background: transparent; }
+.hunt select option { background: #141b20; color: var(--h-text); }
+/* Колонки доски: прокрутка вбок с прилипанием к колонке на телефоне. */
+.board-scroll { scroll-snap-type: x proximity; }
+.board-scroll > * { scroll-snap-align: start; }

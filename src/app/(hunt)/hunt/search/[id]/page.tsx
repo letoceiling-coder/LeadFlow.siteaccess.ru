@@ -142,11 +142,11 @@ export default function HuntSearchDetailPage({ params }: { params: Promise<{ id:
   ] : [];
 
   return (
-    <div className="pt-2">
+    <div>
       <Link href="/hunt/search" className="inline-flex items-center gap-1.5 text-sm text-[var(--h-muted)] hover:text-[var(--h-text)]"><ArrowLeft className="h-4 w-4" /> Все поиски</Link>
       <div className="mt-2 flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h1 className="text-[28px] font-semibold leading-[34px] tracking-tight md:text-[32px] md:leading-[38px]">{data.category} · {data.city}</h1>
+          <h1 className="text-[28px] font-semibold leading-[34px] tracking-tight md:text-[34px] md:leading-[40px]">{data.category} · {data.city}</h1>
           <p className="mt-1 text-sm text-[var(--h-faint)]">Запущен {dayLabel(data.createdAt)} · цель {data.requested ?? "—"} компаний</p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -176,7 +176,7 @@ export default function HuntSearchDetailPage({ params }: { params: Promise<{ id:
                 <div className="mt-1 text-[40px] font-semibold leading-none tabular-nums text-[var(--h-accent)]">{f ? readyShown : "—"}</div>
               </div>
               <div className="ml-auto text-right">
-                <span className={cx("inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium", phase.failed ? "bg-[rgba(255,100,100,0.15)] text-[#ff9b9b]" : phase.index === 3 ? "bg-[rgba(59,224,138,0.14)] text-[#8ff0bd]" : "bg-[rgba(255,214,10,0.14)] text-[var(--h-accent)]")}>
+                <span className={cx("inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium", phase.failed ? "bg-[rgba(255,100,100,0.15)] text-[#ff9b9b]" : phase.index === 3 ? "bg-[rgba(59,224,138,0.14)] text-[#8ff0bd]" : "bg-[rgba(242,220,107,0.14)] text-[var(--h-accent)]")}>
                   {live ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}{statusText(data)}
                 </span>
                 <div className="mt-1 text-xs text-[var(--h-faint)] tabular-nums">{percent}%{eta ? ` · осталось ${eta}` : ""}</div>

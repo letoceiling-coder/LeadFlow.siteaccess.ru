@@ -71,25 +71,42 @@ export function Shell({ user, children }: { user: ShellUser; children: ReactNode
   }
 
   const nav = (
-    <nav className="flex h-full flex-col border-r border-line bg-slate-950 text-slate-200">
-      <div className="flex items-center gap-3 px-4 py-5">
-        <div className="grid h-9 w-9 place-items-center rounded-full bg-teal-700 text-sm font-bold text-white">LF</div>
-        <div>
-          <div className="text-sm font-semibold text-white">LeadFlow</div>
-          <div className="text-xs text-slate-400">Полная версия</div>
+    <nav className="glass-panel flex h-full flex-col rounded-[28px] p-3 text-[var(--h-text)]">
+      <Link href="/hunt" className="flex items-center gap-3 px-1.5 pb-4 pt-1">
+        <div className="grid h-10 w-10 place-items-center rounded-2xl bg-[var(--h-accent)] text-sm font-bold text-[var(--h-accent-ink)]">LF</div>
+        <div className="min-w-0">
+          <div className="text-[17px] font-semibold leading-5 tracking-tight">LeadFlow</div>
+          <div className="truncate text-xs text-[var(--h-faint)]">Полная версия · {user.tenantName}</div>
         </div>
-      </div>
-      <div className="flex-1 space-y-1 overflow-y-auto px-3 pb-4">
+      </Link>
+      <div className="no-scrollbar flex-1 space-y-0.5 overflow-y-auto pb-2">
         {[...NAV, ...(user.isPlatformAdmin ? [{ href: "/admin", label: "Админка", icon: "ShieldCheck" }] : [])].map((item) => {
           const Icon = ICONS[item.icon as keyof typeof ICONS];
           const active = pathname.startsWith(item.href);
+          const hunt = item.href === "/hunt";
           return (
-            <Link key={item.href} href={item.href} className={cnJoin("flex min-h-11 items-center gap-3 rounded-xl px-3 py-2 text-[15px] transition", item.href === "/hunt" ? "mb-2 bg-teal-700 font-semibold" : active ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5")}>
-              <Icon className="h-4 w-4" />
+            <Link
+              key={item.href}
+              href={item.href}
+              aria-current={active ? "page" : undefined}
+              className={cnJoin(
+                "flex min-h-10 items-center gap-3 rounded-2xl px-2.5 py-1.5 text-[14px] font-medium transition",
+                hunt ? "mb-2 bg-[var(--h-accent)] text-[var(--h-accent-ink)] hover:brightness-105" : active ? "bg-[var(--h-text)] text-[#111]" : "text-[var(--h-muted)] hover:bg-white/[0.07] hover:text-[var(--h-text)]",
+              )}
+            >
+              <span className={cnJoin("grid h-7 w-7 shrink-0 place-items-center rounded-xl", hunt ? "bg-black/10" : active ? "bg-[var(--h-accent)] text-[var(--h-accent-ink)]" : "bg-white/[0.06]")}><Icon className="h-4 w-4" /></span>
               {item.label}
             </Link>
           );
         })}
+      </div>
+      <div className="flex items-center gap-2.5 rounded-2xl bg-white/[0.05] p-2">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/[0.12] text-[13px] font-semibold">{user.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[14px] font-semibold leading-5">{user.name}</span>
+          <span className="block truncate text-[12px] text-[var(--h-faint)]">{ROLE_LABEL[user.role] ?? user.role}</span>
+        </span>
+        <button onClick={logout} aria-label="Выйти" title="Выйти" className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[var(--h-muted)] hover:bg-white/10 hover:text-[var(--h-text)]"><LogOut className="h-4 w-4" /></button>
       </div>
     </nav>
   );
@@ -97,41 +114,36 @@ export function Shell({ user, children }: { user: ShellUser; children: ReactNode
   const agentScreen = pathname.startsWith("/agent");
 
   return (
-    <div className="hunt hunt-glow lf-dark h-[100dvh] overflow-hidden lg:grid lg:grid-cols-[260px_1fr]">
-      <aside className="hidden h-screen lg:block">{nav}</aside>
-      {open ? <div className="fixed inset-0 z-40 lg:hidden"><button className="absolute inset-0 bg-slate-950/50" onClick={() => setOpen(false)} aria-label="Закрыть меню" /><div className="relative h-full w-72">{nav}<button className="absolute right-3 top-4 text-white" onClick={() => setOpen(false)}><X /></button></div></div> : null}
+    <div className="hunt hunt-glow lf-dark h-[100dvh] overflow-hidden lg:grid lg:grid-cols-[268px_1fr]">
+      <aside className="hidden h-[100dvh] p-3 pr-0 lg:block">{nav}</aside>
+      {open ? <div className="fixed inset-0 z-40 lg:hidden"><button className="absolute inset-0 bg-slate-950/50" onClick={() => setOpen(false)} aria-label="Закрыть меню" /><div className="relative h-full w-72 p-3">{nav}<button className="absolute right-6 top-6 text-[var(--h-text)]" aria-label="Закрыть меню" onClick={() => setOpen(false)}><X /></button></div></div> : null}
       <div className="flex h-[100dvh] min-w-0 flex-col">
-        <header className="z-30 flex shrink-0 items-center gap-2 border-b border-line bg-white/90 px-4 pb-3 pt-[max(12px,env(safe-area-inset-top))] backdrop-blur sm:gap-3">
+        <header className="z-30 flex shrink-0 items-center gap-2 px-4 pb-3 pt-[max(12px,env(safe-area-inset-top))] sm:gap-3 lg:px-6 lg:pt-4">
           <button className="lg:hidden" onClick={() => setOpen(true)} aria-label="Открыть меню"><Menu /></button>
-          <div className="hidden min-w-0 sm:block">
-            <div className="truncate text-sm font-semibold">{user.tenantName}</div>
-            <div className="text-xs text-slate-500">{current}</div>
+          <div className="min-w-0 lg:hidden">
+            <div className="truncate text-[16px] font-semibold leading-5">{current}</div>
           </div>
           <div className="relative mx-auto w-full max-w-md">
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Поиск" aria-label="Поиск организаций и сайтов" className="h-9 w-full rounded-full border border-line bg-slate-50 px-3.5 text-base sm:text-sm" />
-            {hits ? <div className="absolute z-20 mt-1 w-full rounded-xl border border-line bg-white p-2 shadow-card">
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Найти организацию или сайт" aria-label="Поиск организаций и сайтов" className="h-10 w-full rounded-full border border-line bg-slate-50 px-4 text-base sm:text-sm" />
+            {hits ? <div className="glass-sheet absolute z-20 mt-1 w-full rounded-2xl p-2">
               {hits.organizations.map((item) => <Link key={item.id} href={`/organizations/${item.id}`} className="block rounded-lg px-2 py-1.5 text-sm hover:bg-slate-50">{item.name} <span className="text-slate-500">{item.city}</span></Link>)}
               {hits.sites.map((item) => <Link key={item.id} href={`/sites/${item.id}`} className="block rounded-lg px-2 py-1.5 text-sm hover:bg-slate-50">{item.name}</Link>)}
               {!hits.organizations.length && !hits.sites.length ? <div className="px-2 py-2 text-sm text-slate-500">Ничего не найдено</div> : null}
             </div> : null}
           </div>
-          <Link href="/hunt" className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-teal-700 px-3 text-sm font-semibold"><Crosshair className="h-4 w-4" /><span className="max-[359px]:hidden">Охота</span></Link>
-          <button className="hidden rounded-lg border border-line px-2 py-1 text-xs sm:inline-block" onClick={() => router.push("/integrations")}>{connected} подключено</button>
-          <button className="relative grid h-9 w-9 shrink-0 place-items-center rounded-full border border-line" onClick={() => setNoteOpen((value) => !value)} aria-label="Уведомления">
+          <Link href="/hunt" className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-teal-700 px-4 text-sm font-semibold lg:hidden"><Crosshair className="h-4 w-4" /><span className="max-[359px]:hidden">Охота</span></Link>
+          <button className="glass hidden h-10 items-center gap-2 rounded-full px-3.5 text-xs sm:inline-flex" onClick={() => router.push("/integrations")}><span className="h-1.5 w-1.5 rounded-full bg-[var(--h-ok)]" />{connected} подключено</button>
+          <button className="glass relative grid h-10 w-10 shrink-0 place-items-center rounded-full" onClick={() => setNoteOpen((value) => !value)} aria-label="Уведомления">
             {unread > 0 ? <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-teal-700 px-1 text-[10px] text-white">{unread}</span> : null}
             <Bell className="h-4 w-4" />
           </button>
-          <div className="hidden text-right sm:block">
-            <div className="text-sm font-medium">{user.name}</div>
-            <div className="text-xs text-slate-500">{ROLE_LABEL[user.role] ?? user.role}</div>
-          </div>
-          <button onClick={logout} aria-label="Выйти" className="grid h-9 w-9 shrink-0 place-items-center rounded-full"><LogOut className="h-4 w-4" /></button>
+          <button onClick={logout} aria-label="Выйти" className="glass grid h-10 w-10 shrink-0 place-items-center rounded-full lg:hidden"><LogOut className="h-4 w-4" /></button>
         </header>
-        {noteOpen ? <div className="border-b border-line bg-white px-4 py-3">
+        {noteOpen ? <div className="glass-sheet mx-4 mb-2 rounded-2xl px-4 py-3 lg:mx-6">
           {notes.length === 0 ? <p className="text-sm text-slate-500">Уведомлений нет</p> : notes.slice(0, 6).map((item) => <Link key={item.id} href={item.href || "/"} className="block py-1 text-sm"><b>{item.title}.</b> {item.body}</Link>)}
           <button className="mt-2 text-xs text-teal-800" onClick={() => api("/api/notifications/read", { method: "POST" }).then(() => setNotes(notes.map((item) => ({ ...item, readAt: new Date().toISOString() }))))}>Отметить прочитанными</button>
         </div> : null}
-        <main className={cnJoin("flex min-h-0 flex-1 flex-col px-4 lg:px-6", agentScreen ? "overflow-hidden py-3" : "overflow-y-auto py-6")}>{children}</main>
+        <main className={cnJoin("flex min-h-0 flex-1 flex-col px-4 lg:px-6", agentScreen ? "overflow-hidden py-3" : "overflow-y-auto pb-8 pt-2")}>{children}</main>
       </div>
     </div>
   );

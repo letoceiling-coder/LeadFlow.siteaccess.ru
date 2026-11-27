@@ -105,7 +105,7 @@ const SOURCE_SHORT: Record<string, string> = { maps: "Карты", sites: "Са�
 
 function pill(tone: "live" | "ok" | "error" | "wait") {
   return {
-    live: "bg-[rgba(255,214,10,0.14)] text-[var(--h-accent)]",
+    live: "bg-[rgba(242,220,107,0.14)] text-[var(--h-accent)]",
     wait: "bg-white/10 text-[var(--h-muted)]",
     ok: "bg-[rgba(59,224,138,0.14)] text-[#8ff0bd]",
     error: "bg-[rgba(255,100,100,0.15)] text-[#ff9b9b]",

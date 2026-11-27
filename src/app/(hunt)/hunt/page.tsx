@@ -8,7 +8,8 @@ import { post, useLive } from "@/components/hunt/data";
 import { ItemCard } from "@/components/hunt/item-card";
 import { HealthStrip } from "@/components/hunt/health-card";
 import { LiveSearches } from "@/components/hunt/search-progress";
-import { Button, Chip, Empty, Glass, Notice, Segmented, Skeleton, cx, errorText, useToast } from "@/components/hunt/ui";
+import { Button, Chip, Empty, Notice, PageHeader, SearchInput, Segmented, Skeleton, StatStrip, errorText, useToast } from "@/components/hunt/ui";
+import { NewSearchCard, PipelineMini } from "@/components/hunt/pipeline-mini";
 import { STATUS_LABEL, dayLabel, type Dialogs, type HuntItem, type Plan, type Today } from "@/components/hunt/types";
 import { PlanList } from "@/components/hunt/item-plan";
 
@@ -26,6 +27,7 @@ export default function HuntTodayPage() {
   const [picked, setTab] = useState<Tab | null>(null);
   const [segment, setSegment] = useState<string | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [q, setQ] = useState("");
   const todayRes = useLive<Today>("/api/hunt/today?limit=50", version, 15000);
   const dialogs = useLive<Dialogs>("/api/hunt/dialogs", version, 30000);
   const planRes = useLive<Plan>("/api/hunt/plan", version, 30000);
@@ -50,7 +52,8 @@ export default function HuntTodayPage() {
     for (const item of data?.items ?? []) if (item.segment && item.segmentLabel) map.set(item.segment, item.segmentLabel);
     return [...map.entries()];
   }, [data]);
-  const visible = (list: HuntItem[]) => list.filter((item) => !hidden.has(item.id));
+  const needle = q.trim().toLowerCase();
+  const visible = (list: HuntItem[]) => list.filter((item) => !hidden.has(item.id) && (!needle || `${item.organization.name} ${item.organization.city ?? ""} ${item.organization.category ?? ""}`.toLowerCase().includes(needle)));
   const items = visible(data?.items ?? []).filter((item) => !segment || item.segment === segment);
 
   /** Оптимистично: строка исчезает сразу, при ошибке возвращается. */
@@ -84,45 +87,43 @@ export default function HuntTodayPage() {
   const date = new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "numeric", month: "long", timeZone: tz }).format(new Date());
   const left = data ? Math.max(0, data.dailyLimit - data.sentToday) : 0;
 
+  const first = user.name.split(" ")[0];
   return (
-    <div className="pt-2">
-      <p className="text-sm text-[var(--h-faint)] first-letter:uppercase">{date} · шаг 2 из 5 — отбор</p>
-      <h1 className="mt-1 text-[32px] font-semibold leading-[38px] tracking-tight">
-        <span className="text-[var(--h-muted)]">{greeting(tz)},</span> {user.name.split(" ")[0]}
-      </h1>
+    <div>
+      <PageHeader eyebrow={`${greeting(tz)}, ${first}`} title="Отбор" subtitle={`${date} · шаг 2 из 4`} />
 
+      <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="min-w-0">
       {data ? (
-        <div className="mt-5 grid grid-cols-3 gap-2">
-          <Glass className="px-3.5 py-3">
-            <div className={cx("text-[26px] font-semibold leading-8 tabular-nums", left === 0 && "text-[var(--h-hot)]")}>{data.sentToday}<span className="text-base text-[var(--h-faint)]">/{data.dailyLimit}</span></div>
-            <div className="mt-0.5 text-xs text-[var(--h-muted)]">отправлено</div>
-          </Glass>
-          <button onClick={() => setTab("write")} className="text-left"><Glass tint={data.approved ? "yellow" : null} className="px-3.5 py-3">
-            <div className="text-[26px] font-semibold leading-8 tabular-nums">{data.approved}</div>
-            <div className="mt-0.5 text-xs text-[var(--h-muted)]">написать</div>
-          </Glass></button>
-          <button onClick={() => setTab("remind")} className="text-left"><Glass tint={data.followUps ? "orange" : null} className="px-3.5 py-3">
-            <div className="text-[26px] font-semibold leading-8 tabular-nums">{data.followUps}</div>
-            <div className="mt-0.5 text-xs text-[var(--h-muted)]">срочно</div>
-          </Glass></button>
-        </div>
-      ) : null}
-
-      <div className="mt-3"><HealthStrip /></div>
-      <div className="mt-3"><LiveSearches /></div>
-
-      <div className="sticky top-[68px] z-20 -mx-4 mt-3 px-4 py-2 backdrop-blur-md">
-        <Segmented<Tab>
-          value={tab}
-          onChange={setTab}
+        <StatStrip
+          title="Активность сегодня"
           items={[
-            { key: "plan", label: "План", count: planRes.data ? Math.min(planRes.data.total, planRes.data.limit) : undefined },
-            { key: "new", label: "Новые", count: data?.total },
-            { key: "review", label: "Проверка", count: data?.reviewTotal },
-            { key: "write", label: "Писать", count: data?.approved },
-            { key: "remind", label: "Срочно", count: data?.followUps, alert: true },
+            { label: "отправлено", value: <>{data.sentToday}<span className="text-[18px] text-[var(--h-faint)] md:text-[20px]">/{data.dailyLimit}</span></>, sub: left ? `осталось ${left}` : "лимит дня исчерпан", tone: left === 0 ? "hot" : null },
+            { label: "написать", value: data.approved, sub: "взяты в работу", tone: data.approved ? "accent" : null, onClick: () => setTab("write"), active: tab === "write" },
+            { label: "срочно", value: data.followUps, sub: "напоминания и сроки", tone: data.followUps ? "hot" : null, onClick: () => setTab("remind"), active: tab === "remind" },
+            { label: "на проверке", value: data.reviewTotal, sub: "нужен факт", onClick: () => setTab("review"), active: tab === "review" },
           ]}
         />
+      ) : <div className="skeleton h-[118px] rounded-[var(--h-radius)]" />}
+
+      <div className="mt-3 space-y-2 xl:hidden"><HealthStrip /><LiveSearches /></div>
+
+      <div className="sticky top-[68px] z-20 -mx-4 mt-4 px-4 py-2 backdrop-blur-md md:mx-0 md:px-0">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center">
+          <Segmented<Tab>
+            className="md:flex-1"
+            value={tab}
+            onChange={setTab}
+            items={[
+              { key: "plan", label: "План", count: planRes.data ? Math.min(planRes.data.total, planRes.data.limit) : undefined },
+              { key: "new", label: "Новые", count: data?.total },
+              { key: "review", label: "Проверка", count: data?.reviewTotal },
+              { key: "write", label: "Писать", count: data?.approved },
+              { key: "remind", label: "Срочно", count: data?.followUps, alert: true },
+            ]}
+          />
+          {tab !== "plan" ? <SearchInput value={q} onChange={setQ} placeholder="Название, город, ниша" className="md:w-64" /> : null}
+        </div>
       </div>
 
       <div className="mt-3 space-y-3">
@@ -151,7 +152,7 @@ export default function HuntTodayPage() {
                     ? <Button variant="accent" size="lg" onClick={() => setTab("review")}>Проверить {data.reviewTotal}</Button>
                     : <Button variant="accent" size="lg" onClick={() => router.push("/hunt/search")}><Plus className="h-5 w-5" /> Новый поиск</Button>}
                 />
-              ) : <div className="grid gap-3 lg:grid-cols-2">{items.map((item) => (
+              ) : <div className="grid gap-3 md:grid-cols-2">{items.map((item) => (
                 <ItemCard
                   key={item.id}
                   item={item}
@@ -175,21 +176,21 @@ export default function HuntTodayPage() {
           ) : (
             <>
               <p className="px-1 text-sm text-[var(--h-muted)]">Откройте карточку, посмотрите источник и отметьте недостающий факт, если он есть. Нет — отклоните.</p>
-              <div className="grid gap-3 lg:grid-cols-2">{visible(data.review).map((item) => <ItemCard key={item.id} item={item} onOpen={() => open("item", item.id)} meta={<span className="text-[#ffe680]">Нужен факт «{item.card?.money.length ? "хаоса" : "денег"}» · {item.score} баллов</span>} />)}</div>
+              <div className="grid gap-3 md:grid-cols-2">{visible(data.review).map((item) => <ItemCard key={item.id} item={item} onOpen={() => open("item", item.id)} meta={<span className="text-[#ffe680]">Нужен факт «{item.card?.money.length ? "хаоса" : "денег"}» · {item.score} баллов</span>} />)}</div>
             </>
           )
         ) : null}
 
         {tab === "write" ? (
-          !dialogs.data ? <Skeleton rows={3} /> : dialogs.data.approved.length === 0 ? (
+          !dialogs.data ? <Skeleton rows={3} /> : visible(dialogs.data.approved).length === 0 ? (
             <Empty title="Писать некому" text="Возьмите карточки в работу во вкладке «Новые» — здесь появится готовый текст и кнопки мессенджеров." />
-          ) : <div className="grid gap-3 lg:grid-cols-2">{dialogs.data.approved.map((item) => <ItemCard key={item.id} item={item} onOpen={() => open("item", item.id)} />)}</div>
+          ) : <div className="grid gap-3 md:grid-cols-2">{visible(dialogs.data.approved).map((item) => <ItemCard key={item.id} item={item} onOpen={() => open("item", item.id)} />)}</div>
         ) : null}
 
         {tab === "remind" ? (
-          !dialogs.data ? <Skeleton rows={3} /> : dialogs.data.due.length === 0 ? (
+          !dialogs.data ? <Skeleton rows={3} /> : visible(dialogs.data.due).length === 0 ? (
             <Empty title="Срочного нет" text="Здесь напоминания через 3, 7 и 14 дней и сроки по диалогам: ответить в течение суток, созвон, смета." />
-          ) : <div className="grid gap-3 lg:grid-cols-2">{dialogs.data.due.map((item) => (
+          ) : <div className="grid gap-3 md:grid-cols-2">{visible(dialogs.data.due).map((item) => (
             <ItemCard
               key={item.id}
               item={item}
@@ -198,6 +199,15 @@ export default function HuntTodayPage() {
             />
           ))}</div>
         ) : null}
+      </div>
+      </div>
+
+      <aside className="hidden space-y-3 xl:sticky xl:top-[84px] xl:block xl:self-start">
+        <NewSearchCard />
+        <HealthStrip />
+        <LiveSearches />
+        <PipelineMini version={version} />
+      </aside>
       </div>
     </div>
   );

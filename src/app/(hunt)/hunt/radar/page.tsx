@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Copy, ExternalLink, MapPin, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useHunt } from "@/components/hunt/shell";
 import { post, useLive } from "@/components/hunt/data";
-import { Button, Chip, Empty, Field, Glass, Notice, Segmented, Skeleton, cx, errorText, inputClass, textareaClass, useToast } from "@/components/hunt/ui";
+import { Button, Chip, Empty, Field, Glass, Notice, Segmented, Skeleton, cx, errorText, inputClass, textareaClass, useToast, PageHeader } from "@/components/hunt/ui";
 
 type Source = { id: string; username: string; title: string; type: string; members: number | null; active: boolean; lastPolledAt: string | null; lastError: string | null; readCount: number; matchCount: number };
 type Project = {
@@ -28,7 +28,7 @@ function ago(value: string) {
 }
 
 function scoreTone(score: number) {
-  return score >= 70 ? "bg-[var(--h-accent)] text-[var(--h-accent-ink)]" : score >= 40 ? "bg-[rgba(255,107,44,0.2)] text-[#ffb08a]" : "bg-white/10 text-[var(--h-muted)]";
+  return score >= 70 ? "bg-[var(--h-accent)] text-[var(--h-accent-ink)]" : score >= 40 ? "bg-[rgba(255,145,87,0.2)] text-[#ffb08a]" : "bg-white/10 text-[var(--h-muted)]";
 }
 
 export default function RadarPage() {
@@ -40,10 +40,9 @@ export default function RadarPage() {
   const fresh = projects.reduce((sum, item) => sum + item.fresh, 0);
 
   return (
-    <div className="pt-2">
-      <p className="text-sm text-[var(--h-faint)]">Запросы из открытых Telegram-чатов</p>
-      <h1 className="mt-1 text-[32px] font-semibold leading-[38px] tracking-tight">Радар</h1>
-      <div className="sticky top-[68px] z-20 -mx-4 mt-5 px-4 py-2 backdrop-blur-md">
+    <div>
+      <PageHeader title="Радар" subtitle="запросы из открытых Telegram-чатов" />
+      <div className="sticky top-[68px] z-20 -mx-4 mt-5 px-4 py-2 backdrop-blur-md md:mx-0 md:max-w-xl md:px-0">
         <Segmented value={tab} onChange={setTab} items={[{ key: "feed", label: "Лента", count: overview.data ? fresh : undefined }, { key: "settings", label: "Слова и чаты", count: overview.data ? projects.length : undefined }]} />
       </div>
       {overview.error ? <div className="mt-3"><Notice tone="error">{overview.error}</Notice></div> : !overview.data ? <div className="mt-3"><Skeleton rows={4} /></div> : (
@@ -138,7 +137,7 @@ function FindingCard({ item, onDone }: { item: Finding; onDone: (id: string) => 
       {place || item.deadline || item.budget ? (
         <div className="mt-3 flex flex-wrap gap-1.5 text-[13px]">
           {place ? <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-white/[0.06] px-2.5 py-1"><MapPin className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{place}</span></span> : null}
-          {item.deadline ? <span className="max-w-full truncate rounded-full bg-[rgba(255,107,44,0.14)] px-2.5 py-1 text-[#ffc3a6]">⏱ {item.deadline}</span> : null}
+          {item.deadline ? <span className="max-w-full truncate rounded-full bg-[rgba(255,145,87,0.14)] px-2.5 py-1 text-[#ffc3a6]">⏱ {item.deadline}</span> : null}
           {item.budget ? <span className="max-w-full truncate rounded-full bg-white/[0.06] px-2.5 py-1">💰 {item.budget}</span> : null}
         </div>
       ) : null}

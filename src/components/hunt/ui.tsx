@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
-import { Loader2, X } from "lucide-react";
+import { Loader2, Search, X } from "lucide-react";
 
 /** Компоненты охоты: стекло, один акцент, шкала 4px, области нажатия от 44px. */
 
@@ -13,7 +13,7 @@ export type Tone = "yellow" | "orange" | "pink" | "blue" | "green" | "violet";
 
 export function Glass({ children, className, tint, strong, onClick }: { children: ReactNode; className?: string; tint?: Tone | null; strong?: boolean; onClick?: () => void }) {
   return (
-    <div onClick={onClick} className={cx(strong ? "glass-strong" : "glass", tint && `tint-${tint}`, "rounded-[24px]", className)}>
+    <div onClick={onClick} className={cx(strong ? "glass-strong" : "glass", tint && `tint-${tint}`, "rounded-[var(--h-radius)]", className)}>
       {children}
     </div>
   );
@@ -29,7 +29,7 @@ export function Button({ variant = "glass", size = "md", pending, className, chi
     ghost: "text-[var(--h-muted)] hover:text-[var(--h-text)] hover:bg-white/5",
     danger: "bg-[rgba(255,100,100,0.14)] text-[#ff8a8a] border border-[rgba(255,100,100,0.3)] hover:bg-[rgba(255,100,100,0.2)]",
   }[variant];
-  const sizes = { lg: "h-14 px-6 text-base rounded-2xl", md: "h-11 px-4 text-[15px] rounded-full", sm: "h-9 px-3 text-sm rounded-full" }[size];
+  const sizes = { lg: "h-14 px-6 text-base rounded-2xl", md: "h-11 px-4 text-[15px] rounded-full md:h-10 md:text-sm", sm: "h-9 px-3 text-sm rounded-full md:h-8 md:text-[13px]" }[size];
   return (
     <button {...props} disabled={props.disabled || pending} className={cx("inline-flex items-center justify-center gap-2 whitespace-nowrap transition duration-150 disabled:cursor-not-allowed disabled:opacity-45", styles, sizes, className)}>
       {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
@@ -58,7 +58,7 @@ export function Segmented<T extends string>({ items, value, onChange, className 
             role="tab"
             aria-selected={on}
             onClick={() => onChange(item.key)}
-            className={cx("flex h-10 flex-auto shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full px-2.5 text-[13px] font-medium transition sm:gap-1.5 sm:px-3 sm:text-sm", on ? "bg-[var(--h-text)] text-[#111]" : "text-[var(--h-muted)] hover:text-[var(--h-text)]")}
+            className={cx("flex h-10 flex-auto shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full px-2.5 text-[13px] font-medium transition sm:gap-1.5 sm:px-3.5 sm:text-sm md:h-9", on ? "bg-[var(--h-text)] text-[#111]" : "text-[var(--h-muted)] hover:text-[var(--h-text)]")}
           >
             <span>{item.label}</span>
             {item.count != null ? (
@@ -78,7 +78,7 @@ export function Chip({ active, children, onClick, className, disabled }: { activ
       disabled={disabled}
       onClick={onClick}
       className={cx(
-        "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm transition disabled:opacity-45",
+        "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm transition disabled:opacity-45 md:h-8 md:px-3 md:text-[13px]",
         active ? "border-transparent bg-[var(--h-accent)] font-medium text-[var(--h-accent-ink)]" : "border-[var(--h-line)] bg-white/[0.03] text-[var(--h-text)] hover:bg-white/[0.07]",
         className,
       )}
@@ -89,9 +89,9 @@ export function Chip({ active, children, onClick, className, disabled }: { activ
 }
 
 export function PriorityBadge({ priority, score }: { priority: string; score: number }) {
-  const tone = priority === "A" ? "bg-[var(--h-accent)] text-[var(--h-accent-ink)]" : priority === "B" ? "bg-[rgba(255,107,44,0.2)] text-[#ffb08a]" : "bg-white/10 text-[var(--h-muted)]";
+  const tone = priority === "A" ? "bg-[var(--h-accent)] text-[var(--h-accent-ink)]" : priority === "B" ? "bg-[rgba(255,145,87,0.2)] text-[#ffbe98]" : "bg-white/10 text-[var(--h-muted)]";
   return (
-    <span className={cx("inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 text-[13px] font-semibold tabular-nums", tone)}>
+    <span className={cx("inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 text-[13px] font-semibold tabular-nums md:h-6 md:px-2 md:text-[12px]", tone)}>
       {priority}
       <span className="font-medium opacity-70">{score}</span>
     </span>
@@ -130,7 +130,7 @@ export const textareaClass = "w-full rounded-2xl border border-[var(--h-line)] b
 export function Skeleton({ rows = 3 }: { rows?: number }) {
   return (
     <div className="space-y-3" aria-busy="true" aria-label="Загрузка">
-      {Array.from({ length: rows }).map((_, index) => <div key={index} className="skeleton h-[76px] rounded-[24px]" />)}
+      {Array.from({ length: rows }).map((_, index) => <div key={index} className="skeleton h-[76px] rounded-[var(--h-radius)]" />)}
     </div>
   );
 }
@@ -149,10 +149,121 @@ export function Notice({ tone = "info", children }: { tone?: "info" | "error" | 
   const styles = {
     info: "border-[rgba(138,184,255,0.3)] bg-[rgba(138,184,255,0.08)] text-[#cfe0ff]",
     error: "border-[rgba(255,100,100,0.3)] bg-[rgba(255,100,100,0.1)] text-[#ffb3b3]",
-    warn: "border-[rgba(255,107,44,0.3)] bg-[rgba(255,107,44,0.1)] text-[#ffc3a6]",
+    warn: "border-[rgba(255,145,87,0.3)] bg-[rgba(255,145,87,0.1)] text-[#ffc3a6]",
     ok: "border-[rgba(59,224,138,0.3)] bg-[rgba(59,224,138,0.08)] text-[#b5f5d2]",
   }[tone];
   return <div className={cx("rounded-2xl border px-4 py-3 text-sm leading-5", styles)}>{children}</div>;
+}
+
+/* ───────────── Каркас страницы: заголовок, полоса цифр, заголовок блока, поиск ───────────── */
+
+/** Заголовок как в CRM: крупное название, рядом мелкая подпись (дата, шаг), справа действия страницы. */
+export function PageHeader({ title, subtitle, eyebrow, actions }: { title: ReactNode; subtitle?: ReactNode; eyebrow?: ReactNode; actions?: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3 pt-1">
+      <div className="min-w-0">
+        {eyebrow ? <p className="mb-1 text-[13px] text-[var(--h-faint)] first-letter:uppercase">{eyebrow}</p> : null}
+        <h1 className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[28px] font-semibold leading-[34px] tracking-tight md:text-[34px] md:leading-[40px]">
+          <span className="min-w-0 break-words">{title}</span>
+          {subtitle ? <span className="text-[14px] font-medium leading-5 tracking-normal text-[var(--h-muted)] first-letter:uppercase">{subtitle}</span> : null}
+        </h1>
+      </div>
+      {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
+    </div>
+  );
+}
+
+export type Stat = { label: string; value: ReactNode; sub?: ReactNode; tone?: "hot" | "ok" | "accent" | null; onClick?: () => void; active?: boolean };
+
+/** Полоса цифр в одной стеклянной карточке с разделителями — как «Активность сегодня». На телефоне 2×2. */
+export function StatStrip({ title, items, action }: { title?: ReactNode; items: Stat[]; action?: ReactNode }) {
+  return (
+    <section>
+      {title || action ? <SectionTitle title={title} action={action} /> : null}
+      <div className="glass overflow-hidden rounded-[var(--h-radius)]">
+        {/* Разделители: у каждой ячейки рамка слева и сверху, сетка сдвинута на 1px — лишние линии уходят за край. */}
+        <div className={cx("-ml-px -mt-px grid", items.length > 3 ? "grid-cols-2 md:grid-cols-4" : "grid-cols-3")}>
+        {items.map((item) => {
+          const Tag = item.onClick ? "button" : "div";
+          return (
+            <Tag
+              key={item.label}
+              type={item.onClick ? "button" : undefined}
+              onClick={item.onClick}
+              aria-pressed={item.onClick ? Boolean(item.active) : undefined}
+              className={cx(
+                "relative min-w-0 border-l border-t border-[var(--h-line)] px-4 py-3.5 text-left transition md:px-5 md:py-4",
+                item.onClick && "hover:bg-white/[0.05]",
+                item.active && "bg-white/[0.06]",
+              )}
+            >
+              <div className={cx("text-[28px] font-semibold leading-8 tracking-tight tabular-nums md:text-[34px] md:leading-10", item.tone === "hot" && "text-[var(--h-hot)]", item.tone === "ok" && "text-[var(--h-ok)]", item.tone === "accent" && "text-[var(--h-accent)]")}>{item.value}</div>
+              <div className="mt-0.5 truncate text-[13px] text-[var(--h-muted)]">{item.label}</div>
+              {item.sub ? <div className="truncate text-[12px] text-[var(--h-faint)]">{item.sub}</div> : null}
+              {item.active ? <span className="absolute inset-x-4 bottom-0 h-0.5 rounded-full bg-[var(--h-accent)]" /> : null}
+            </Tag>
+          );
+        })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** Заголовок блока: название, счётчик в кружке, справа ссылка или переключатель. */
+export function SectionTitle({ title, count, action, className }: { title?: ReactNode; count?: number | null; action?: ReactNode; className?: string }) {
+  return (
+    <div className={cx("mb-2.5 flex min-h-8 items-center justify-between gap-3 px-1", className)}>
+      <h2 className="flex items-center gap-2 text-[17px] font-semibold tracking-tight">
+        {title}
+        {count != null ? <span className="grid h-6 min-w-6 place-items-center rounded-full bg-white/[0.12] px-1.5 text-[12px] font-semibold tabular-nums text-[var(--h-text)]">{count}</span> : null}
+      </h2>
+      {action ? <div className="flex shrink-0 items-center gap-2 text-[13px] text-[var(--h-muted)]">{action}</div> : null}
+    </div>
+  );
+}
+
+/** Поле поиска-пилюля с крестиком очистки. */
+export function SearchInput({ value, onChange, placeholder = "Найти", className, label }: { value: string; onChange: (value: string) => void; placeholder?: string; className?: string; label?: string }) {
+  return (
+    <label className={cx("relative block", className)}>
+      <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--h-faint)]" />
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        aria-label={label ?? placeholder}
+        className="h-10 w-full rounded-full border border-[var(--h-line)] bg-white/[0.05] pl-10 pr-9 text-base outline-none transition placeholder:text-[var(--h-faint)] focus:border-[var(--h-accent)] focus:bg-white/[0.07] sm:text-sm"
+      />
+      {value ? (
+        <button type="button" aria-label="Очистить" onClick={() => onChange("")} className="absolute right-1.5 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full text-[var(--h-faint)] hover:bg-white/10 hover:text-[var(--h-text)]">
+          <X className="h-4 w-4" />
+        </button>
+      ) : null}
+    </label>
+  );
+}
+
+export const selectClass = "[color-scheme:dark] h-10 max-w-full rounded-full border border-[var(--h-line)] bg-white/[0.05] px-3.5 text-base outline-none transition hover:bg-white/[0.07] focus:border-[var(--h-accent)] sm:text-sm";
+
+/** Переключатель вида (доска / список / сроки) — маленький, для правого угла заголовка. */
+export function ViewSwitch<T extends string>({ items, value, onChange }: { items: { key: T; label: string; icon?: ReactNode }[]; value: T; onChange: (key: T) => void }) {
+  return (
+    <div role="tablist" className="glass flex gap-0.5 rounded-full p-1">
+      {items.map((item) => (
+        <button
+          key={item.key}
+          role="tab"
+          aria-selected={item.key === value}
+          onClick={() => onChange(item.key)}
+          className={cx("inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium transition", item.key === value ? "bg-[var(--h-text)] text-[#111]" : "text-[var(--h-muted)] hover:text-[var(--h-text)]")}
+        >
+          {item.icon}
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 /* ───────────── Панель: справа на планшете и ПК, снизу на телефоне ───────────── */
