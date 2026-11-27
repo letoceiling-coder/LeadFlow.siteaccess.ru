@@ -68,11 +68,23 @@ function stemHit(tokenStem: string, wordStem: string) {
   return wordStem.length >= 4 && tokenStem.startsWith(wordStem);
 }
 
-/** Слово или фраза: все значимые слова фразы встречаются в тексте в любой форме. */
+/** Насколько далеко друг от друга могут стоять слова фразы (в значимых словах). */
+const PHRASE_WINDOW = 6;
+
+/**
+ * Слово или фраза: все значимые слова фразы встречаются в тексте в любой форме и стоят рядом
+ * (в окне PHRASE_WINDOW слов) — иначе длинный рекламный пост с «поиском» в начале и «помещением» в конце
+ * проходил бы как запрос.
+ */
 export function phraseMatches(textStems: string[], phrase: string) {
   const words = stems(phrase);
   if (!words.length) return false;
-  return words.every((word) => textStems.some((item) => stemHit(item, word)));
+  const positions = words.map((word) => textStems.flatMap((item, index) => (stemHit(item, word) ? [index] : [])));
+  if (positions.some((list) => !list.length)) return false;
+  if (words.length === 1) return true;
+  const window = Math.max(PHRASE_WINDOW, words.length * 2);
+  // Для каждой позиции первого слова ищем остальные слова в пределах окна.
+  return positions[0].some((start) => positions.slice(1).every((list) => list.some((index) => Math.abs(index - start) <= window)));
 }
 
 export type KeywordVerdict = { pass: boolean; matched: string[]; blockedBy: string | null };

@@ -14,7 +14,7 @@ import { completeJson } from "../src/lib/integrations/openrouter";
 import { resolveTaskModel } from "../src/lib/domain/models";
 import { buildRadarPrompt, keywordFilter, radarResultSchema, readablePeer, type RadarResult } from "../src/lib/domain/radar";
 
-const KEYWORDS = ["аренда склада", "ищу склад", "склад в аренду", "ответственное хранение", "помещение под производство", "снять склад", "нужен склад", "складское помещение", "аренда помещения"];
+const KEYWORDS = process.env.RADAR_KEYWORDS ? process.env.RADAR_KEYWORDS.split(";") : ["аренда склада", "ищу склад", "склад в аренду", "ответственное хранение", "помещение под производство", "снять склад", "нужен склад", "складское помещение", "аренда помещения"];
 const MINUS = ["продам", "вакансия", "требуется кладовщик", "грузчик"];
 const TARGET = "люди и компании, которые сами ищут склад, складское или производственное помещение в аренду, или ответственное хранение";
 
@@ -31,11 +31,11 @@ async function main() {
     else console.log(`пропуск ${ref}: ${peer.type}, не открытый чат`);
   }
   for (const query of queries) {
-    if (chats.size >= 6) break;
+    if (chats.size >= Number(process.env.RADAR_MAX_CHATS ?? 6)) break;
     const found = (await reader.search(query, 20)).filter(readablePeer);
     console.log(`поиск «${query}»: открытых ${found.length} — ${found.slice(0, 8).map((peer) => `@${peer.username} (${peer.type}, ${peer.members ?? "?"})`).join(", ")}`);
     // Запросы пишут в группах; каналы — объявления владельцев.
-    for (const peer of found.filter((item) => item.type !== "channel").slice(0, 2)) chats.set(peer.username!, { title: peer.title, type: peer.type, members: peer.members ?? null });
+    for (const peer of found.filter((item) => item.type !== "channel").slice(0, Number(process.env.RADAR_PER_QUERY ?? 2))) chats.set(peer.username!, { title: peer.title, type: peer.type, members: peer.members ?? null });
   }
   const useAi = process.env.RADAR_AI !== "0" && (await isReady(tenantId, "openrouter").catch(() => false));
   const ai = useAi ? await requireReady(tenantId, "openrouter", "Проверка радара") : null;
@@ -43,7 +43,7 @@ async function main() {
   let totalRead = 0;
   let totalPassed = 0;
   let totalAi = 0;
-  for (const [username, info] of [...chats].slice(0, 6)) {
+  for (const [username, info] of [...chats].slice(0, Number(process.env.RADAR_MAX_CHATS ?? 6))) {
     let history;
     try {
       history = await reader.history(username, { limit: 50 });
@@ -57,7 +57,7 @@ async function main() {
     totalRead += texts.length;
     totalPassed += passed.length;
     console.log(`\n@${username} «${info.title}» (${info.type}, ${info.members ?? "?"} уч.): прочитано ${texts.length}, прошли фильтр ${passed.length}, свежее ${newest}`);
-    for (const { item, verdict } of passed.slice(0, 4)) {
+    for (const { item, verdict } of passed.slice(0, Number(process.env.RADAR_PER_CHAT ?? 4))) {
       const line = item.text.replace(/\s+/g, " ").slice(0, 160);
       let result: RadarResult | null = null;
       if (ai) {
