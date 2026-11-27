@@ -227,7 +227,11 @@ export async function runQualify(organizationId: string, jobTenantId?: string, o
   // Бриф 27.11: досье, зацепка или NOT_FOUND, оценка A/B/C и два черновика.
   const lead = assembleLead({ facts, card, ai, raw: fresh.raw, contacts: fresh.contacts, description: fresh.description });
   // Писать можно по старому стоп-правилу (деньги + хаос + контакт) или по правилу брифа: есть зацепка и прямой канал.
-  const writable = scored.ready || (lead.dossier.hook !== NOT_FOUND && lead.dossier.channels.some((item) => item.direct) && lead.dossier.grade !== "C");
+  // Для фондов, производителей и B2B (А/Б/Г) правило «деньги + хаос» малого бизнеса не подходит:
+  // достаточно реальной зацепки и оценки не ниже B (контакт для связи — в досье, канал подсказывает, где его найти).
+  const hasHook = lead.dossier.hook !== NOT_FOUND;
+  const nonRetail = lead.dossier.preset === "А" || lead.dossier.preset === "Б" || lead.dossier.preset === "Г";
+  const writable = scored.ready || (hasHook && lead.dossier.grade !== "C" && (nonRetail || lead.dossier.channels.some((item) => item.direct)));
   const data = {
     preset: lead.dossier.preset,
     grade: lead.dossier.grade,

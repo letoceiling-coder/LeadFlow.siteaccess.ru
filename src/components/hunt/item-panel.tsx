@@ -332,7 +332,15 @@ export function ItemPanel({ id }: { id: string | null }) {
           {error ? <Notice tone="error">{error}</Notice> : null}
           {returned && composing && !touched ? <Notice tone="ok">Вернулись из чата. Если сообщение ушло — выберите канал и нажмите «Скопировать и отметить» внизу, тогда касания дня 4 и 8 пойдут по плану.</Notice> : null}
           {data.blocked ? <Notice tone="error">{data.blocked} Писать нельзя.</Notice> : null}
-          {data.cardStatus !== "ready" ? <Notice tone="warn">Нет подтверждённого факта денег или хаоса — по стоп-правилу писать нельзя.</Notice> : null}
+          {data.cardStatus !== "ready" ? (
+            <Notice tone="warn">
+              {data.preset && data.preset !== "В"
+                ? data.grade === "C"
+                  ? "Оценка C: нет зацепки или контакта, по которому можно написать. Найдите личный контакт руководителя в описании канала или на сайте."
+                  : "Зацепки нет (NOT_FOUND) — без реального факта о них не пишем."
+                : "Нет подтверждённого факта денег или хаоса — по стоп-правилу писать нельзя."}
+            </Notice>
+          ) : null}
 
           {touched ? (
             <Notice tone="ok">
@@ -448,7 +456,7 @@ export function ItemPanel({ id }: { id: string | null }) {
             <Notice>Отправлено {dayLabel(data.sentAt)}. {data.nextFollowUpAt ? `Напоминание ${data.followUpStep + 1} из 3 — ${dayLabel(data.nextFollowUpAt)}.` : ""}</Notice>
           ) : null}
 
-          {data.cardStatus === "no_fact" && firstContact && data.card ? (
+          {data.cardStatus === "no_fact" && firstContact && data.card && (!data.preset || data.preset === "В") ? (
             <section className="tint-yellow space-y-3 rounded-2xl border p-4">
               <div>
                 <h3 className="text-lg font-semibold">Проверьте карточку</h3>
